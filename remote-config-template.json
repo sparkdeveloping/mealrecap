@@ -1,0 +1,13 @@
+{
+  "parameters": {
+    "smart_actions_new_user_limit": { "defaultValue": { "value": "12" } },
+    "smart_actions_new_user_days": { "defaultValue": { "value": "7" } },
+    "smart_actions_weekly_free_limit": { "defaultValue": { "value": "6" } },
+    "smart_action_cost_text": { "defaultValue": { "value": "1" } },
+    "smart_action_cost_voice": { "defaultValue": { "value": "1" } },
+    "smart_action_cost_photo": { "defaultValue": { "value": "3" } },
+    "smart_action_cost_day_recap": { "defaultValue": { "value": "2" } },
+    "paywall_enabled": { "defaultValue": { "value": "true" } }
+  },
+  "conditions": []
+}

@@ -1,0 +1,72 @@
+name: MealRecap
+options:
+  minimumXcodeGenVersion: 2.43.0
+  deploymentTarget:
+    iOS: "26.0"
+  createIntermediateGroups: true
+packages:
+  Firebase:
+    url: https://github.com/firebase/firebase-ios-sdk.git
+    from: 12.14.0
+  SDWebImageSwiftUI:
+    url: https://github.com/SDWebImage/SDWebImageSwiftUI.git
+    from: 3.1.0
+settings:
+  base:
+    SWIFT_VERSION: 6.2
+    IPHONEOS_DEPLOYMENT_TARGET: 26.0
+targets:
+  MealRecap:
+    type: application
+    platform: iOS
+    deploymentTarget: "26.0"
+    sources:
+      - path: MealRecap
+        excludes:
+          - Resources/GoogleService-Info.plist
+          - Resources/Info.plist
+          - Resources/MealRecap.entitlements
+          - Resources/PrivacyInfo.xcprivacy
+          - Resources/MealRecap.storekit
+    resources:
+      - path: MealRecap/Resources/Assets.xcassets
+      - path: MealRecap/Resources/GoogleService-Info.plist
+      - path: MealRecap/Resources/PrivacyInfo.xcprivacy
+      - path: MealRecap/Resources/MealRecap.storekit
+    dependencies:
+      - package: Firebase
+        product: FirebaseAnalytics
+      - package: Firebase
+        product: FirebaseFirestore
+      - package: Firebase
+        product: FirebaseStorage
+      - package: Firebase
+        product: FirebaseRemoteConfig
+      - package: Firebase
+        product: FirebaseCrashlytics
+      - package: SDWebImageSwiftUI
+        product: SDWebImageSwiftUI
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.sbj.mealrecap
+        PRODUCT_NAME: MealRecap
+        DISPLAY_NAME: MealRecap
+        INFOPLIST_FILE: MealRecap/Resources/Info.plist
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        MARKETING_VERSION: 1.0
+        CURRENT_PROJECT_VERSION: 1
+        DEVELOPMENT_TEAM: ""
+        CODE_SIGN_STYLE: Automatic
+        GENERATE_INFOPLIST_FILE: NO
+        TARGETED_DEVICE_FAMILY: 1
+        SUPPORTS_MACCATALYST: NO
+        SUPPORTED_PLATFORMS: iphoneos iphonesimulator
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
+        SWIFT_STRICT_CONCURRENCY: targeted
+        CLANG_ENABLE_MODULES: YES
+        UILAUNCHSCREEN_GENERATION: YES
+      configs:
+        Debug:
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: DEBUG
+        Release:
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: RELEASE

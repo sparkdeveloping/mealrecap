@@ -69,7 +69,6 @@ struct CalendarSheet: View {
                             isToday: calendar.isDateInToday(date),
                             progress: completion(for: date)
                         ) {
-                            MRHaptics.selection()
                             selectedDate = date
                             onSelect(date)
                         }
@@ -92,8 +91,7 @@ struct CalendarSheet: View {
         }
         .padding(24)
         .background(
-            LinearGradient(colors: [MRColor.backgroundTop, MRColor.background], startPoint: .top, endPoint: .bottom)
-                .ignoresSafeArea()
+            AmbientBackground()
         )
         .onAppear { visibleMonth = selectedDate }
     }
@@ -104,14 +102,14 @@ struct CalendarSheet: View {
                 .font(.system(size: 13, weight: .bold))
                 .foregroundStyle(MRColor.text)
                 .frame(width: 38, height: 38)
-                .background(.white.opacity(0.42))
-                .clipShape(Circle())
+                .glassCircle(strokeOpacity: 0.54, shadowOpacity: 0.04)
+                .contentShape(Circle())
         }
-        .buttonStyle(PressablePolish(haptic: .light))
+        .buttonStyle(PressablePolish())
+        .accessibilityLabel(systemName == "chevron.left" ? "Previous month" : "Next month")
     }
 
     private func moveMonth(_ delta: Int) {
-        MRHaptics.selection()
         visibleMonth = calendar.date(byAdding: .month, value: delta, to: visibleMonth) ?? visibleMonth
     }
 
@@ -149,13 +147,16 @@ private struct CalendarRingDay: View {
             }
             .frame(height: 48)
             .frame(maxWidth: .infinity)
-            .background(isSelected ? MRColor.accentDeep : (isToday ? MRColor.accentSoft.opacity(0.42) : .clear))
-            .clipShape(Circle())
-            .overlay(Circle().stroke(isToday && !isSelected ? MRColor.accentDeep.opacity(0.45) : .clear, lineWidth: 1))
+            .glassCircle(
+                tint: isSelected ? MRColor.accentDeep.opacity(0.55) : (isToday ? MRColor.accentSoft.opacity(0.28) : nil),
+                strokeOpacity: isToday || isSelected ? 0.48 : 0.18,
+                shadowOpacity: isSelected ? 0.04 : 0.0
+            )
+            .contentShape(Circle())
             .accessibilityLabel(date.formatted(date: .complete, time: .omitted))
             .accessibilityValue(progress > 0 ? "\(Int((progress * 100).rounded())) percent of calorie goal" : "No logged calories")
         }
-        .buttonStyle(PressablePolish(haptic: nil))
+        .buttonStyle(PressablePolish())
     }
 }
 

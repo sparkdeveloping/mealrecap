@@ -12,7 +12,7 @@ struct PhotoLogSheet: View {
     @State private var previewData: Data?
     @State private var isWorking = false
     @State private var showCamera = false
-    @State private var showSourceDialog = false
+    @State private var showLibraryPicker = false
     @State private var showCameraDeniedAlert = false
     @State private var photoLoadError: String?
 
@@ -57,20 +57,14 @@ struct PhotoLogSheet: View {
                     .padding(.bottom, 12)
                 }
                 .frame(width: width)
+                .ignoresSafeArea(.container, edges: [.top, .bottom])
+                .contentMargins(.top, 0, for: .scrollContent)
+                .contentMargins(.bottom, 0, for: .scrollContent)
             }
             .frame(width: width, height: proxy.size.height)
         }
-        .confirmationDialog("Snap a meal photo", isPresented: $showSourceDialog, titleVisibility: .visible) {
-            Button("Take Photo") { requestCamera() }
-            Button("Choose from Library") { selectedPhoto = nil }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("Use your camera or pick an existing meal photo.")
-        }
-        .photosPicker(isPresented: Binding(
-            get: { false },
-            set: { _ in }
-        ), selection: $selectedPhoto, matching: .images)
+        .ignoresSafeArea(.container, edges: [.top, .bottom])
+        .photosPicker(isPresented: $showLibraryPicker, selection: $selectedPhoto, matching: .images)
         .sheet(isPresented: $showCamera) {
             CameraPicker { data in
                 setPreview(data)
@@ -78,21 +72,19 @@ struct PhotoLogSheet: View {
             .ignoresSafeArea()
         }
         .alert("Camera access is needed to take a meal photo.", isPresented: $showCameraDeniedAlert) {
-            Button("Choose Library") { selectedPhoto = nil }
+            Button("Choose Library") { showLibraryPicker = true }
             Button("Open Settings") { openSettings() }
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("You can still choose a photo from your library.")
         }
-        .onAppear {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-                if previewImage == nil { showSourceDialog = true }
-            }
-        }
         .onChange(of: selectedPhoto) { _, newValue in
             guard let newValue else { return }
             Task { await loadPhoto(newValue) }
         }
+        .sensoryFeedback(.selection, trigger: showLibraryPicker)
+        .sensoryFeedback(.selection, trigger: previewImage != nil)
+        .sensoryFeedback(.success, trigger: isWorking)
         .interactiveDismissDisabled(isWorking)
     }
 
@@ -119,7 +111,7 @@ struct PhotoLogSheet: View {
             }
 
             PhotosPicker(selection: $selectedPhoto, matching: .images) {
-                sourceButtonLabel(title: "Choose from Library", subtitle: "Pick an existing meal photo", systemImage: "photo.on.rectangle.angled")
+                PhotoSourceButtonLabel(title: "Choose from Library", subtitle: "Pick an existing meal photo", systemImage: "photo.on.rectangle.angled")
             }
             .buttonStyle(PressablePolish())
             .disabled(isWorking)
@@ -131,39 +123,11 @@ struct PhotoLogSheet: View {
 
     private func sourceButton(title: String, subtitle: String, systemImage: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            sourceButtonLabel(title: title, subtitle: subtitle, systemImage: systemImage)
+            PhotoSourceButtonLabel(title: title, subtitle: subtitle, systemImage: systemImage)
         }
         .buttonStyle(PressablePolish())
         .disabled(isWorking)
         .accessibilityLabel(title)
-    }
-
-    private func sourceButtonLabel(title: String, subtitle: String, systemImage: String) -> some View {
-        HStack(spacing: 14) {
-            Image(systemName: systemImage)
-                .font(.system(size: 18, weight: .semibold))
-                .foregroundStyle(MRColor.accentDeep)
-                .frame(width: 44, height: 44)
-                .glassCircle(tint: MRColor.accentSoft.opacity(0.32), strokeOpacity: 0.42, shadowOpacity: 0.02)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.mrBody.weight(.bold))
-                    .foregroundStyle(MRColor.text)
-                Text(subtitle)
-                    .font(.mrSmall)
-                    .foregroundStyle(MRColor.secondaryText)
-                    .lineLimit(1)
-            }
-            Spacer(minLength: 8)
-            Image(systemName: "chevron.right")
-                .font(.system(size: 12, weight: .bold))
-                .foregroundStyle(MRColor.tertiaryText)
-        }
-        .padding(.horizontal, 14)
-        .frame(maxWidth: .infinity, minHeight: 62, alignment: .leading)
-        .glassRounded(cornerRadius: 22, tint: MRColor.backgroundTop.opacity(0.08), strokeOpacity: 0.36, shadowOpacity: 0.02)
-        .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
     }
 
     private func previewCard(image: UIImage, data: Data) -> some View {
@@ -208,9 +172,8 @@ struct PhotoLogSheet: View {
             HStack(spacing: 10) {
                 Button {
                     clearPreview()
-                    showSourceDialog = true
                 } label: {
-                    Text("Retake")
+                    Text("Choose another")
                         .font(.mrSmall.weight(.bold))
                         .foregroundStyle(MRColor.text)
                         .frame(maxWidth: .infinity, minHeight: 46)
@@ -311,5 +274,39 @@ struct PhotoLogSheet: View {
         await app.analyzePhoto(data)
         app.markPaywallMilestoneIfNeeded(.firstPhotoSuccess)
         dismiss()
+    }
+}
+
+private struct PhotoSourceButtonLabel: View {
+    let title: String
+    let subtitle: String
+    let systemImage: String
+
+    var body: some View {
+        HStack(spacing: 14) {
+            Image(systemName: systemImage)
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(MRColor.accentDeep)
+                .frame(width: 44, height: 44)
+                .glassCircle(tint: MRColor.accentSoft.opacity(0.32), strokeOpacity: 0.42, shadowOpacity: 0.02)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.mrBody.weight(.bold))
+                    .foregroundStyle(MRColor.text)
+                Text(subtitle)
+                    .font(.mrSmall)
+                    .foregroundStyle(MRColor.secondaryText)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 8)
+            Image(systemName: "chevron.right")
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(MRColor.tertiaryText)
+        }
+        .padding(.horizontal, 14)
+        .frame(maxWidth: .infinity, minHeight: 62, alignment: .leading)
+        .glassRounded(cornerRadius: 22, tint: MRColor.backgroundTop.opacity(0.08), strokeOpacity: 0.36, shadowOpacity: 0.02)
+        .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
     }
 }

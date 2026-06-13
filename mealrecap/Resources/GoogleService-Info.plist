@@ -13,7 +13,7 @@
 	<key>PROJECT_ID</key>
 	<string>food-sbj</string>
 	<key>STORAGE_BUCKET</key>
-	<string>food-sbj.firebasestorage.app</string>
+	<string>food-sbj.appspot.com</string>
 	<key>IS_ADS_ENABLED</key>
 	<false></false>
 	<key>IS_ANALYTICS_ENABLED</key>

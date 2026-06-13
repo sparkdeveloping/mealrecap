@@ -1,5 +1,4 @@
 import SwiftUI
-import AuthenticationServices
 
 struct AuthView: View {
     @EnvironmentObject private var app: AppModel
@@ -29,7 +28,7 @@ struct AuthView: View {
                         .keyboardType(.emailAddress)
                         .textContentType(.emailAddress)
                         .authField()
-                    SecureField("Password", text: $password)
+                    SecureField("Local password", text: $password)
                         .textContentType(isCreatingAccount ? .newPassword : .password)
                         .authField()
 
@@ -38,7 +37,7 @@ struct AuthView: View {
                     } label: {
                         HStack {
                             if isBusy { ProgressView().tint(.white) }
-                            Text(isCreatingAccount ? "Create account" : "Sign in")
+                            Text(isCreatingAccount ? "Create local account" : "Continue")
                         }
                         .font(.mrHeadline)
                         .foregroundStyle(.white)
@@ -49,19 +48,13 @@ struct AuthView: View {
                     }
                     .disabled(isBusy || email.isEmpty || password.count < 6)
 
-                    SignInWithAppleButton(.continue) { request in
-                        app.auth.prepareAppleRequest(request)
-                    } onCompletion: { result in
-                        Task {
-                            do { try await app.auth.handleAppleCompletion(result) }
-                            catch { app.errorMessage = error.localizedDescription }
-                        }
-                    }
-                    .signInWithAppleButtonStyle(.black)
-                    .frame(height: 54)
-                    .clipShape(Capsule())
+                    Text("Your local MealRecap account keeps your cloud data grouped on this device.")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(MRColor.secondaryText)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 8)
 
-                    Button(isCreatingAccount ? "Already have an account? Sign in" : "New here? Create an account") {
+                    Button(isCreatingAccount ? "Already have a local account? Continue" : "New here? Create local account") {
                         withAnimation(.spring(response: 0.35, dampingFraction: 0.9)) {
                             isCreatingAccount.toggle()
                         }

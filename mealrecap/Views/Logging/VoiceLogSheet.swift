@@ -16,7 +16,7 @@ struct VoiceLogSheet: View {
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: .infinity, minHeight: 80)
                 .padding()
-                .background(MRColor.card)
+                .background(MRColor.card.opacity(0.72))
                 .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
 
             Button {
@@ -57,6 +57,6 @@ struct VoiceLogSheet: View {
             .disabled(app.speech.transcript.isEmpty)
         }
         .padding(24)
-        .background(MRColor.background)
+        .background(AmbientBackground())
     }
 }

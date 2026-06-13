@@ -14,6 +14,7 @@ struct DayPagerView: View {
             ForEach(days, id: \.self) { date in
                 DayView(date: date)
                     .tag(date)
+                    .transition(.asymmetric(insertion: .scale(scale: 0.985).combined(with: .opacity), removal: .scale(scale: 1.015).combined(with: .opacity)))
                     .task(id: date) {
                         if Calendar.current.isDate(date, inSameDayAs: app.selectedDate) {
                             await app.loadDate(date)
@@ -22,6 +23,8 @@ struct DayPagerView: View {
             }
         }
         .tabViewStyle(.page(indexDisplayMode: .never))
+        .ignoresSafeArea(.container, edges: [.top, .bottom])
+        .animation(.interpolatingSpring(stiffness: 220, damping: 25), value: app.selectedDate)
         .onChange(of: app.selectedDate) { _, newValue in
             Task { await app.loadDate(newValue) }
         }
