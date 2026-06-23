@@ -5,6 +5,7 @@ import { onRequest } from "firebase-functions/v2/https";
 import { defineSecret } from "firebase-functions/params";
 import { createHash, randomUUID } from "crypto";
 import { GoogleGenAI } from "@google/genai";
+import { inflateSync } from "zlib";
 
 initializeApp({ storageBucket: "food-sbj.appspot.com" });
 
@@ -50,6 +51,26 @@ function logError(ctx: RequestLog, step: string, error: unknown, details?: Recor
 
 type MealType = "breakfast" | "lunch" | "dinner" | "snack" | "dessert" | "drink" | "unknown";
 
+type AdvancedNutritionDetails = {
+  saturatedFatG: number | null;
+  transFatG: number | null;
+  fiberG: number | null;
+  sugarG: number | null;
+  addedSugarG: number | null;
+  sodiumMg: number | null;
+  cholesterolMg: number | null;
+  potassiumMg: number | null;
+  calciumMg: number | null;
+  ironMg: number | null;
+};
+
+type MealNutritionDetails = AdvancedNutritionDetails & {
+  calories: number;
+  proteinG: number;
+  carbsG: number;
+  fatG: number;
+};
+
 type NutritionHint = {
   source: "usda" | "openfoodfacts";
   name: string;
@@ -57,6 +78,16 @@ type NutritionHint = {
   proteinPer100g?: number | null;
   carbsPer100g?: number | null;
   fatPer100g?: number | null;
+  saturatedFatPer100g?: number | null;
+  transFatPer100g?: number | null;
+  fiberPer100g?: number | null;
+  sugarPer100g?: number | null;
+  addedSugarPer100g?: number | null;
+  sodiumPer100gMg?: number | null;
+  cholesterolPer100gMg?: number | null;
+  potassiumPer100gMg?: number | null;
+  calciumPer100gMg?: number | null;
+  ironPer100gMg?: number | null;
 };
 
 type MealItem = {
@@ -68,6 +99,7 @@ type MealItem = {
   protein: number | null;
   carbs: number | null;
   fat: number | null;
+  nutritionDetails: AdvancedNutritionDetails;
   confidence: number;
 };
 
@@ -77,6 +109,7 @@ type MealAnalysis = {
   items: MealItem[];
   totalCalories: number;
   macros: { protein: number; carbs: number; fat: number };
+  nutritionDetails: MealNutritionDetails;
   confidence: number;
   assistantSummary: string;
   needsClarification: boolean;
@@ -84,6 +117,9 @@ type MealAnalysis = {
   imageURL?: string | null;
   foodCategory?: string | null;
   imageStatus?: string | null;
+  imageKind?: "appBackground" | "cutout" | "photo" | "unknown" | string | null;
+  imageStyleVersion?: string | null;
+  imageAlpha?: "appBackground" | "transparent" | "opaque" | "unknown" | string | null;
 };
 
 function resolveUserID(data: any): string {
@@ -114,6 +150,65 @@ function clampNumber(value: unknown, fallback = 0): number {
   return Math.max(0, n);
 }
 
+function optionalNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? Math.max(0, value) : null;
+}
+
+function firstOptionalNumber(...values: unknown[]): number | null {
+  for (const value of values) {
+    const n = optionalNumber(value);
+    if (n !== null) return n;
+  }
+  return null;
+}
+
+function roundGram(value: number | null): number | null {
+  if (value === null) return null;
+  return Math.round(value * 10) / 10;
+}
+
+function roundMilligram(value: number | null): number | null {
+  if (value === null) return null;
+  return Math.round(value);
+}
+
+function emptyAdvancedNutritionDetails(): AdvancedNutritionDetails {
+  return {
+    saturatedFatG: null,
+    transFatG: null,
+    fiberG: null,
+    sugarG: null,
+    addedSugarG: null,
+    sodiumMg: null,
+    cholesterolMg: null,
+    potassiumMg: null,
+    calciumMg: null,
+    ironMg: null
+  };
+}
+
+function normalizeAdvancedNutritionDetails(raw: any): AdvancedNutritionDetails {
+  const details = raw?.nutritionDetails ?? raw?.nutrients ?? raw ?? {};
+  return {
+    saturatedFatG: roundGram(firstOptionalNumber(details?.saturatedFatG, details?.saturatedFat, details?.satFatG, raw?.saturatedFatG)),
+    transFatG: roundGram(firstOptionalNumber(details?.transFatG, details?.transFat, raw?.transFatG)),
+    fiberG: roundGram(firstOptionalNumber(details?.fiberG, details?.fiber, details?.dietaryFiberG, raw?.fiberG)),
+    sugarG: roundGram(firstOptionalNumber(details?.sugarG, details?.sugar, details?.totalSugarG, raw?.sugarG)),
+    addedSugarG: roundGram(firstOptionalNumber(details?.addedSugarG, details?.addedSugar, raw?.addedSugarG)),
+    sodiumMg: roundMilligram(firstOptionalNumber(details?.sodiumMg, details?.sodium, raw?.sodiumMg)),
+    cholesterolMg: roundMilligram(firstOptionalNumber(details?.cholesterolMg, details?.cholesterol, raw?.cholesterolMg)),
+    potassiumMg: roundMilligram(firstOptionalNumber(details?.potassiumMg, details?.potassium, raw?.potassiumMg)),
+    calciumMg: roundMilligram(firstOptionalNumber(details?.calciumMg, details?.calcium, raw?.calciumMg)),
+    ironMg: roundGram(firstOptionalNumber(details?.ironMg, details?.iron, raw?.ironMg))
+  };
+}
+
+function sumKnown(values: Array<number | null | undefined>): number | null {
+  const known = values.filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+  if (known.length === 0) return null;
+  return known.reduce((sum, value) => sum + value, 0);
+}
+
 function normalizeMeal(raw: any): MealAnalysis {
   const seenItemIDs = new Map<string, number>();
   const items: MealItem[] = Array.isArray(raw?.items) ? raw.items.map((item: any, index: number) => ({
@@ -125,12 +220,34 @@ function normalizeMeal(raw: any): MealAnalysis {
     protein: typeof item?.protein === "number" ? clampNumber(item.protein) : null,
     carbs: typeof item?.carbs === "number" ? clampNumber(item.carbs) : null,
     fat: typeof item?.fat === "number" ? clampNumber(item.fat) : null,
+    nutritionDetails: normalizeAdvancedNutritionDetails(item),
     confidence: Math.min(1, Math.max(0, typeof item?.confidence === "number" ? item.confidence : 0.65))
   })) : [];
 
   const totalCalories = Math.round(
     typeof raw?.totalCalories === "number" ? clampNumber(raw.totalCalories) : items.reduce((sum, item) => sum + item.calories, 0)
   );
+
+  const macros = {
+    protein: clampNumber(raw?.macros?.protein),
+    carbs: clampNumber(raw?.macros?.carbs),
+    fat: clampNumber(raw?.macros?.fat)
+  };
+
+  const rawAdvanced = normalizeAdvancedNutritionDetails(raw?.nutritionDetails ?? raw?.nutrients ?? raw);
+  const itemAdvancedValues = items.map((item) => item.nutritionDetails);
+  const advanced: AdvancedNutritionDetails = {
+    saturatedFatG: rawAdvanced.saturatedFatG ?? roundGram(sumKnown(itemAdvancedValues.map((item) => item.saturatedFatG))),
+    transFatG: rawAdvanced.transFatG ?? roundGram(sumKnown(itemAdvancedValues.map((item) => item.transFatG))),
+    fiberG: rawAdvanced.fiberG ?? roundGram(sumKnown(itemAdvancedValues.map((item) => item.fiberG))),
+    sugarG: rawAdvanced.sugarG ?? roundGram(sumKnown(itemAdvancedValues.map((item) => item.sugarG))),
+    addedSugarG: rawAdvanced.addedSugarG ?? roundGram(sumKnown(itemAdvancedValues.map((item) => item.addedSugarG))),
+    sodiumMg: rawAdvanced.sodiumMg ?? roundMilligram(sumKnown(itemAdvancedValues.map((item) => item.sodiumMg))),
+    cholesterolMg: rawAdvanced.cholesterolMg ?? roundMilligram(sumKnown(itemAdvancedValues.map((item) => item.cholesterolMg))),
+    potassiumMg: rawAdvanced.potassiumMg ?? roundMilligram(sumKnown(itemAdvancedValues.map((item) => item.potassiumMg))),
+    calciumMg: rawAdvanced.calciumMg ?? roundMilligram(sumKnown(itemAdvancedValues.map((item) => item.calciumMg))),
+    ironMg: rawAdvanced.ironMg ?? roundGram(sumKnown(itemAdvancedValues.map((item) => item.ironMg)))
+  };
 
   const mealTypeValues: MealType[] = ["breakfast", "lunch", "dinner", "snack", "dessert", "drink", "unknown"];
   const mealType: MealType = mealTypeValues.includes(raw?.mealType) ? raw.mealType : "unknown";
@@ -149,13 +266,17 @@ function normalizeMeal(raw: any): MealAnalysis {
       protein: null,
       carbs: null,
       fat: null,
+      nutritionDetails: emptyAdvancedNutritionDetails(),
       confidence: 0.45
     }],
     totalCalories,
-    macros: {
-      protein: clampNumber(raw?.macros?.protein),
-      carbs: clampNumber(raw?.macros?.carbs),
-      fat: clampNumber(raw?.macros?.fat)
+    macros,
+    nutritionDetails: {
+      calories: totalCalories,
+      proteinG: macros.protein,
+      carbsG: macros.carbs,
+      fatG: macros.fat,
+      ...advanced
     },
     confidence: Math.min(1, Math.max(0, typeof raw?.confidence === "number" ? raw.confidence : 0.65)),
     assistantSummary: typeof raw?.assistantSummary === "string" ? raw.assistantSummary : "Logged your meal.",
@@ -163,7 +284,10 @@ function normalizeMeal(raw: any): MealAnalysis {
     photoPath: typeof raw?.photoPath === "string" ? raw.photoPath : null,
     imageURL: typeof raw?.imageURL === "string" ? raw.imageURL : null,
     foodCategory: typeof raw?.foodCategory === "string" ? raw.foodCategory : null,
-    imageStatus: typeof raw?.imageStatus === "string" ? raw.imageStatus : null
+    imageStatus: typeof raw?.imageStatus === "string" ? raw.imageStatus : null,
+    imageKind: typeof raw?.imageKind === "string" ? raw.imageKind : null,
+    imageStyleVersion: typeof raw?.imageStyleVersion === "string" ? raw.imageStyleVersion : null,
+    imageAlpha: typeof raw?.imageAlpha === "string" ? raw.imageAlpha : null
   };
 }
 
@@ -214,14 +338,27 @@ async function searchUSDA(query: string, usdaKey: string): Promise<NutritionHint
     const foods = Array.isArray(json.foods) ? json.foods : [];
     return foods.slice(0, 4).map((food: any) => {
       const nutrients = Array.isArray(food.foodNutrients) ? food.foodNutrients : [];
-      const find = (name: string) => nutrients.find((n: any) => String(n.nutrientName || "").toLowerCase().includes(name))?.value ?? null;
+      const find = (...names: string[]) => nutrients.find((n: any) => {
+        const nutrientName = String(n.nutrientName || "").toLowerCase();
+        return names.some((name) => nutrientName.includes(name));
+      })?.value ?? null;
       return {
         source: "usda" as const,
         name: food.description || query,
         caloriesPer100g: find("energy"),
         proteinPer100g: find("protein"),
         carbsPer100g: find("carbohydrate"),
-        fatPer100g: find("total lipid")
+        fatPer100g: find("total lipid", "total fat"),
+        saturatedFatPer100g: find("saturated"),
+        transFatPer100g: find("total trans", "trans"),
+        fiberPer100g: find("fiber"),
+        sugarPer100g: find("sugars"),
+        addedSugarPer100g: find("added sugar", "sugars, added"),
+        sodiumPer100gMg: find("sodium"),
+        cholesterolPer100gMg: find("cholesterol"),
+        potassiumPer100gMg: find("potassium"),
+        calciumPer100gMg: find("calcium"),
+        ironPer100gMg: find("iron")
       };
     });
   } catch (error) {
@@ -246,7 +383,17 @@ async function searchOpenFoodFacts(query: string): Promise<NutritionHint[]> {
         caloriesPer100g: nutriments["energy-kcal_100g"] ?? null,
         proteinPer100g: nutriments.proteins_100g ?? null,
         carbsPer100g: nutriments.carbohydrates_100g ?? null,
-        fatPer100g: nutriments.fat_100g ?? null
+        fatPer100g: nutriments.fat_100g ?? null,
+        saturatedFatPer100g: nutriments["saturated-fat_100g"] ?? null,
+        transFatPer100g: nutriments["trans-fat_100g"] ?? null,
+        fiberPer100g: nutriments.fiber_100g ?? null,
+        sugarPer100g: nutriments.sugars_100g ?? null,
+        addedSugarPer100g: nutriments["added-sugars_100g"] ?? null,
+        sodiumPer100gMg: typeof nutriments.sodium_100g === "number" ? nutriments.sodium_100g * 1000 : null,
+        cholesterolPer100gMg: typeof nutriments.cholesterol_100g === "number" ? nutriments.cholesterol_100g * 1000 : null,
+        potassiumPer100gMg: typeof nutriments.potassium_100g === "number" ? nutriments.potassium_100g * 1000 : null,
+        calciumPer100gMg: typeof nutriments.calcium_100g === "number" ? nutriments.calcium_100g * 1000 : null,
+        ironPer100gMg: typeof nutriments.iron_100g === "number" ? nutriments.iron_100g * 1000 : null
       };
     });
   } catch (error) {
@@ -262,6 +409,63 @@ async function gatherHints(text: string, usdaKey: string): Promise<NutritionHint
     return [...usda, ...off].slice(0, 4);
   }));
   return hintSets.flat().slice(0, 12);
+}
+
+function nullableNumberSchema() {
+  return { anyOf: [{ type: "number", minimum: 0 }, { type: "null" }] };
+}
+
+function advancedNutritionSchema() {
+  return {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      saturatedFatG: nullableNumberSchema(),
+      transFatG: nullableNumberSchema(),
+      fiberG: nullableNumberSchema(),
+      sugarG: nullableNumberSchema(),
+      addedSugarG: nullableNumberSchema(),
+      sodiumMg: nullableNumberSchema(),
+      cholesterolMg: nullableNumberSchema(),
+      potassiumMg: nullableNumberSchema(),
+      calciumMg: nullableNumberSchema(),
+      ironMg: nullableNumberSchema()
+    },
+    required: [
+      "saturatedFatG",
+      "transFatG",
+      "fiberG",
+      "sugarG",
+      "addedSugarG",
+      "sodiumMg",
+      "cholesterolMg",
+      "potassiumMg",
+      "calciumMg",
+      "ironMg"
+    ]
+  };
+}
+
+function mealNutritionSchema() {
+  const advanced = advancedNutritionSchema();
+  return {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      calories: { type: "integer", minimum: 0 },
+      proteinG: { type: "number", minimum: 0 },
+      carbsG: { type: "number", minimum: 0 },
+      fatG: { type: "number", minimum: 0 },
+      ...advanced.properties
+    },
+    required: [
+      "calories",
+      "proteinG",
+      "carbsG",
+      "fatG",
+      ...advanced.required
+    ]
+  };
 }
 
 function mealJsonSchema() {
@@ -281,15 +485,16 @@ function mealJsonSchema() {
           properties: {
             id: { type: "string" },
             name: { type: "string" },
-            estimatedGrams: { anyOf: [{ type: "number" }, { type: "null" }] },
+            estimatedGrams: { anyOf: [{ type: "number", minimum: 0 }, { type: "null" }] },
             servingDescription: { anyOf: [{ type: "string" }, { type: "null" }] },
             calories: { type: "integer", minimum: 0 },
-            protein: { anyOf: [{ type: "number" }, { type: "null" }] },
-            carbs: { anyOf: [{ type: "number" }, { type: "null" }] },
-            fat: { anyOf: [{ type: "number" }, { type: "null" }] },
+            protein: { anyOf: [{ type: "number", minimum: 0 }, { type: "null" }] },
+            carbs: { anyOf: [{ type: "number", minimum: 0 }, { type: "null" }] },
+            fat: { anyOf: [{ type: "number", minimum: 0 }, { type: "null" }] },
+            nutritionDetails: advancedNutritionSchema(),
             confidence: { type: "number", minimum: 0, maximum: 1 }
           },
-          required: ["id", "name", "estimatedGrams", "servingDescription", "calories", "protein", "carbs", "fat", "confidence"]
+          required: ["id", "name", "estimatedGrams", "servingDescription", "calories", "protein", "carbs", "fat", "nutritionDetails", "confidence"]
         }
       },
       totalCalories: { type: "integer", minimum: 0 },
@@ -303,11 +508,12 @@ function mealJsonSchema() {
         },
         required: ["protein", "carbs", "fat"]
       },
+      nutritionDetails: mealNutritionSchema(),
       confidence: { type: "number", minimum: 0, maximum: 1 },
       assistantSummary: { type: "string" },
       needsClarification: { type: "boolean" }
     },
-    required: ["title", "mealType", "foodCategory", "items", "totalCalories", "macros", "confidence", "assistantSummary", "needsClarification"]
+    required: ["title", "mealType", "foodCategory", "items", "totalCalories", "macros", "nutritionDetails", "confidence", "assistantSummary", "needsClarification"]
   };
 }
 
@@ -346,11 +552,17 @@ async function callOpenAI(input: any, schema: any, schemaName: string, apiKey: s
   return JSON.parse(outputText);
 }
 
-const baseInstructions = `You are MealRecap's nutrition parser. Return only valid JSON matching the requested schema. Estimate calories honestly and label uncertainty through confidence. Do not claim food was weighed from a photo. Use estimatedGrams only when visually or textually reasonable. Prefer common serving sizes when grams are unknown. Keep assistantSummary short, warm, and direct.`;
+const baseInstructions = `You are MealRecap's nutrition parser. Return only valid JSON matching the requested schema. Estimate calories honestly and label uncertainty through confidence. Do not claim food was weighed from a photo. Use estimatedGrams only when visually or textually reasonable. Prefer common serving sizes when grams are unknown. Include actual food components in items, not generic source labels like "Photo analysis" or "Voice recap". Always include nutritionDetails for the whole meal and each item. Advanced nutrients must use null when they cannot be reasonably estimated. Sodium, cholesterol, potassium, calcium, and iron are in milligrams. Saturated fat, trans fat, fiber, sugar, and added sugar are in grams. Keep assistantSummary short, warm, and direct.`;
 
-const mealImageStyle = `Create a photorealistic, high-end editorial food image for MealRecap.
-Style: warm off-white studio surface, real food only, soft natural window light, realistic shadows, ceramic plate or glassware when appropriate, tasteful overhead or slight 45-degree angle, no text, no logos, no packaging, no hands, no watermark, no utensils unless essential, minimal Apple-like composition, appetizing but honest.
-The image should feel like a premium food journal asset shot by a professional food photographer, not a cartoon, not an illustration, not a stock-photo collage.`;
+const mealImageStyleVersion = "app-background-v1";
+
+const mealImageBackgroundHex = "#F8F3E8";
+
+const mealImageStyle = `Create a premium photorealistic MealRecap food asset on a warm cream matte background.
+The image should NOT try to be transparent. Do not draw a gray checkerboard, transparency grid, alpha preview, white square, plate, table, countertop, studio surface, room, scene, text, logo, watermark, hands, packaging, or decorative props.
+Use the exact background direction: solid warm cream / ivory matte background matching MealRecap's app canvas, approximately ${mealImageBackgroundHex}. The background should be plain, soft, and seamless so it visually blends into the app UI.
+Only the edible food should be visible. Allow a minimal essential vessel only when physically necessary, such as coffee in a simple cup, juice in a clear glass, soup in a simple bowl, or a smoothie in a glass. For solid foods, avoid plates and surfaces.
+Use realistic appetizing texture, clean edges, soft natural light, premium Apple-like composition, and generous warm-cream margin around the food. The image should look like a high-end food object placed directly on MealRecap's cream interface, not like restaurant photography and not like a transparency preview.`;
 
 function safeSlug(input: string): string {
   return input.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 72) || "meal";
@@ -367,7 +579,7 @@ function canonicalMealDescriptor(meal: MealAnalysis): string {
 
 function mealImageCacheKey(meal: MealAnalysis, reference?: { mimeType: string; base64: string }): string {
   const referenceHash = reference ? createHash("sha256").update(reference.base64.slice(0, 120000)).digest("hex").slice(0, 12) : "no-reference";
-  return createHash("sha256").update(`${canonicalMealDescriptor(meal)}::${referenceHash}`).digest("hex").slice(0, 28);
+  return createHash("sha256").update(`${mealImageStyleVersion}::${canonicalMealDescriptor(meal)}::${referenceHash}`).digest("hex").slice(0, 28);
 }
 
 function imagePromptForMeal(meal: MealAnalysis, reference?: { mimeType: string; base64: string }): string {
@@ -376,10 +588,10 @@ function imagePromptForMeal(meal: MealAnalysis, reference?: { mimeType: string; 
     return `${item.name}${serving}`;
   }).join(", ");
   const referenceInstruction = reference
-    ? "Use the attached user meal photo as the factual source. Preserve the actual foods, portions, plating logic, and visible ingredients, but improve lighting, composition, color, and background into a clean MealRecap studio image."
-    : "Create the meal as a realistic single cohesive food scene based only on the listed food items.";
+    ? `Use the attached user meal photo only as factual reference. Preserve the actual foods and approximate portions, but restyle the result onto MealRecap's seamless warm cream app background (${mealImageBackgroundHex}). Remove the original table, plate, environment, and clutter unless a simple cup/bowl/glass is essential to identify the food or drink.`
+    : `Create the meal as a realistic isolated food asset based only on the listed food items, placed on MealRecap's seamless warm cream app background (${mealImageBackgroundHex}).`;
 
-  return `${mealImageStyle}\n${referenceInstruction}\nMeal title: ${meal.title}\nMeal type: ${meal.mealType}\nFood items: ${items}\nApproximate calories: ${meal.totalCalories}.\nComposition: square crop, generous negative space, hero food centered slightly above middle, realistic texture, crisp but soft, premium minimal nutrition journal aesthetic. Output should look like a real photo clipped into an iOS food journal, not an icon.`;
+  return `${mealImageStyle}\n${referenceInstruction}\nMeal title: ${meal.title}\nMeal type: ${meal.mealType}\nFood items: ${items}\nApproximate calories: ${meal.totalCalories}.\nComposition: square canvas, hero food centered, generous warm cream margin, realistic texture, clean edges, no checkerboard, no transparency simulation, no background pattern, no tabletop scene. Output should visually disappear into MealRecap's warm cream app canvas.`;
 }
 
 function extractGeminiInlineImage(json: any): { mimeType: string; data: string } | null {
@@ -476,6 +688,122 @@ async function callGeminiImage(promptParts: any[], apiKey: string, ctx?: Request
   return null;
 }
 
+
+type ImageTransparencyAnalysis = {
+  mimeType: string;
+  hasRealAlpha: boolean;
+  imageKind: "appBackground" | "cutout" | "photo";
+  imageAlpha: "appBackground" | "transparent" | "opaque" | "unknown";
+  reason: string;
+  alphaPixelCount?: number;
+  totalPixels?: number;
+};
+
+function analyzeGeneratedImageTransparency(buffer: Buffer, mimeType: string): ImageTransparencyAnalysis {
+  // v1 matte/app-background strategy:
+  // Gemini often draws fake checkerboard transparency instead of returning real alpha.
+  // For release stability, generated assets intentionally use MealRecap's warm cream app background
+  // and are rendered in iOS as borderless app-background assets rather than true cutouts.
+  return {
+    mimeType,
+    hasRealAlpha: false,
+    imageKind: "appBackground",
+    imageAlpha: "appBackground",
+    reason: `app-background-matte:${mealImageBackgroundHex}`
+  };
+}
+
+function decodePngPixels(buffer: Buffer): { width: number; height: number; alphaValues: number[] } | null {
+  const signature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  if (buffer.length < 33 || !buffer.subarray(0, 8).equals(signature)) return null;
+
+  let offset = 8;
+  let width = 0;
+  let height = 0;
+  let bitDepth = 0;
+  let colorType = 0;
+  let interlace = 0;
+  const idatChunks: Buffer[] = [];
+
+  while (offset + 12 <= buffer.length) {
+    const length = buffer.readUInt32BE(offset);
+    const type = buffer.toString("ascii", offset + 4, offset + 8);
+    const dataStart = offset + 8;
+    const dataEnd = dataStart + length;
+    if (dataEnd + 4 > buffer.length) break;
+    const data = buffer.subarray(dataStart, dataEnd);
+
+    if (type === "IHDR") {
+      width = data.readUInt32BE(0);
+      height = data.readUInt32BE(4);
+      bitDepth = data[8];
+      colorType = data[9];
+      interlace = data[12];
+    } else if (type === "IDAT") {
+      idatChunks.push(data);
+    } else if (type === "IEND") {
+      break;
+    }
+
+    offset = dataEnd + 4;
+  }
+
+  if (!width || !height || bitDepth !== 8 || interlace !== 0 || idatChunks.length === 0) return null;
+  const channels = colorType === 6 ? 4 : colorType === 4 ? 2 : colorType === 2 ? 3 : colorType === 0 ? 1 : 0;
+  if (!channels) return null;
+
+  const bytesPerPixel = channels;
+  const stride = width * channels;
+  const inflated = inflateSync(Buffer.concat(idatChunks));
+  const alphaValues: number[] = [];
+  let inOffset = 0;
+  let prev = Buffer.alloc(stride);
+
+  for (let y = 0; y < height; y += 1) {
+    if (inOffset >= inflated.length) break;
+    const filter = inflated[inOffset++];
+    const raw = inflated.subarray(inOffset, inOffset + stride);
+    inOffset += stride;
+    if (raw.length !== stride) return null;
+    const recon = Buffer.alloc(stride);
+
+    for (let x = 0; x < stride; x += 1) {
+      const left = x >= bytesPerPixel ? recon[x - bytesPerPixel] : 0;
+      const up = prev[x] || 0;
+      const upLeft = x >= bytesPerPixel ? prev[x - bytesPerPixel] || 0 : 0;
+      const value = raw[x];
+      switch (filter) {
+        case 0: recon[x] = value; break;
+        case 1: recon[x] = (value + left) & 0xff; break;
+        case 2: recon[x] = (value + up) & 0xff; break;
+        case 3: recon[x] = (value + Math.floor((left + up) / 2)) & 0xff; break;
+        case 4: recon[x] = (value + paethPredictor(left, up, upLeft)) & 0xff; break;
+        default: return null;
+      }
+    }
+
+    if (colorType === 6) {
+      for (let i = 3; i < recon.length; i += 4) alphaValues.push(recon[i]);
+    } else if (colorType === 4) {
+      for (let i = 1; i < recon.length; i += 2) alphaValues.push(recon[i]);
+    }
+
+    prev = recon;
+  }
+
+  return { width, height, alphaValues };
+}
+
+function paethPredictor(a: number, b: number, c: number): number {
+  const p = a + b - c;
+  const pa = Math.abs(p - a);
+  const pb = Math.abs(p - b);
+  const pc = Math.abs(p - c);
+  if (pa <= pb && pa <= pc) return a;
+  if (pb <= pc) return b;
+  return c;
+}
+
 async function ensureFirebaseDownloadURL(path: string, ctx?: RequestLog): Promise<string | null> {
   try {
     const bucket = defaultBucket();
@@ -513,7 +841,7 @@ async function ensureFirebaseDownloadURL(path: string, ctx?: RequestLog): Promis
   }
 }
 
-async function getCachedGeneratedImage(cacheKey: string, ctx?: RequestLog): Promise<{ photoPath: string; imageURL?: string | null } | null> {
+async function getCachedGeneratedImage(cacheKey: string, ctx?: RequestLog): Promise<{ photoPath: string; imageURL?: string | null; imageKind?: string | null; imageStyleVersion?: string | null; imageAlpha?: string | null } | null> {
   try {
     const snap = await getFirestore().collection("foodImageCache").doc(cacheKey).get();
     const data = snap.data();
@@ -528,7 +856,10 @@ async function getCachedGeneratedImage(cacheKey: string, ctx?: RequestLog): Prom
       }, { merge: true });
       return {
         photoPath,
-        imageURL: tokenURL ?? cachedURL
+        imageURL: tokenURL ?? cachedURL,
+        imageKind: typeof data?.imageKind === "string" ? data.imageKind : null,
+        imageStyleVersion: typeof data?.imageStyleVersion === "string" ? data.imageStyleVersion : null,
+        imageAlpha: typeof data?.imageAlpha === "string" ? data.imageAlpha : null
       };
     }
   } catch (error) {
@@ -537,7 +868,7 @@ async function getCachedGeneratedImage(cacheKey: string, ctx?: RequestLog): Prom
   return null;
 }
 
-async function saveGeneratedImage(cacheKey: string, meal: MealAnalysis, image: { mimeType: string; data: string; model?: string; apiVersion?: string }, prompt: string, ctx?: RequestLog): Promise<{ photoPath: string; imageURL: string }> {
+async function saveGeneratedImage(cacheKey: string, meal: MealAnalysis, image: { mimeType: string; data: string; model?: string; apiVersion?: string }, prompt: string, ctx?: RequestLog): Promise<{ photoPath: string; imageURL: string; imageKind: string; imageStyleVersion: string; imageAlpha: string }> {
   const extension = image.mimeType.includes("jpeg") || image.mimeType.includes("jpg") ? "jpg" : "png";
   const path = `generatedFoodImages/${cacheKey}-${safeSlug(meal.title)}.${extension}`;
   const downloadToken = randomUUID();
@@ -559,6 +890,15 @@ async function saveGeneratedImage(cacheKey: string, meal: MealAnalysis, image: {
     throw error;
   }
 
+  const transparency = analyzeGeneratedImageTransparency(buffer, image.mimeType);
+  if (ctx) logStep(ctx, "image.transparency.analyzed", {
+    imageKind: transparency.imageKind,
+    imageAlpha: transparency.imageAlpha,
+    reason: transparency.reason,
+    alphaPixelCount: transparency.alphaPixelCount,
+    totalPixels: transparency.totalPixels
+  });
+
   const bucket = defaultBucket();
   if (ctx) logStep(ctx, "storage.bucket.ready", { bucket: bucket.name, configuredBucket: storageBucketName });
 
@@ -578,6 +918,9 @@ async function saveGeneratedImage(cacheKey: string, meal: MealAnalysis, image: {
           cacheKey,
           generatedBy: "MealRecap",
           model: image.model ?? "unknown",
+          imageKind: transparency.imageKind,
+          imageAlpha: transparency.imageAlpha,
+          imageStyleVersion: mealImageStyleVersion,
           firebaseStorageDownloadTokens: downloadToken
         }
       }
@@ -602,6 +945,10 @@ async function saveGeneratedImage(cacheKey: string, meal: MealAnalysis, image: {
       descriptor: canonicalMealDescriptor(meal),
       prompt,
       mimeType: image.mimeType,
+      imageKind: transparency.imageKind,
+      imageAlpha: transparency.imageAlpha,
+      imageStyleVersion: mealImageStyleVersion,
+      transparencyReason: transparency.reason,
       createdAt: FieldValue.serverTimestamp(),
       lastUsedAt: FieldValue.serverTimestamp(),
       hits: FieldValue.increment(1),
@@ -615,7 +962,13 @@ async function saveGeneratedImage(cacheKey: string, meal: MealAnalysis, image: {
   }
 
   if (ctx) logStep(ctx, "image.persist.done", { photoPath: path, bucket: bucket.name });
-  return { photoPath: path, imageURL: mediaURL };
+  return {
+    photoPath: path,
+    imageURL: mediaURL,
+    imageKind: transparency.imageKind,
+    imageStyleVersion: mealImageStyleVersion,
+    imageAlpha: transparency.imageAlpha
+  };
 }
 
 async function attachGeneratedMealImage(uid: string, date: string, meal: MealAnalysis, apiKey: string, reference?: { mimeType: string; base64: string }, ctx?: RequestLog): Promise<MealAnalysis> {
@@ -625,7 +978,15 @@ async function attachGeneratedMealImage(uid: string, date: string, meal: MealAna
     const cachedImage = await getCachedGeneratedImage(cacheKey, ctx);
     if (cachedImage) {
       if (ctx) logStep(ctx, "image.cache.hit", { cacheKey, photoPath: cachedImage.photoPath, hasImageURL: Boolean(cachedImage.imageURL) });
-      return { ...meal, photoPath: cachedImage.photoPath, imageURL: cachedImage.imageURL, imageStatus: "ready" } as MealAnalysis & { imageURL?: string | null };
+      return {
+        ...meal,
+        photoPath: cachedImage.photoPath,
+        imageURL: cachedImage.imageURL,
+        imageStatus: "ready",
+        imageKind: cachedImage.imageKind ?? null,
+        imageStyleVersion: cachedImage.imageStyleVersion ?? null,
+        imageAlpha: cachedImage.imageAlpha ?? null
+      } as MealAnalysis & { imageURL?: string | null };
     }
     if (ctx) logStep(ctx, "image.cache.miss", { cacheKey });
 
@@ -650,7 +1011,15 @@ async function attachGeneratedMealImage(uid: string, date: string, meal: MealAna
     const savedImage = await saveGeneratedImage(cacheKey, meal, generated, prompt, ctx);
     await recordBackendLog(uid, `mealImageGenerated:${date}`);
     if (ctx) logStep(ctx, "image.done", { photoPath: savedImage.photoPath, hasImageURL: Boolean(savedImage.imageURL) });
-    return { ...meal, photoPath: savedImage.photoPath, imageURL: savedImage.imageURL, imageStatus: "ready" } as MealAnalysis & { imageURL?: string | null };
+    return {
+      ...meal,
+      photoPath: savedImage.photoPath,
+      imageURL: savedImage.imageURL,
+      imageStatus: "ready",
+      imageKind: savedImage.imageKind,
+      imageStyleVersion: savedImage.imageStyleVersion,
+      imageAlpha: savedImage.imageAlpha
+    } as MealAnalysis & { imageURL?: string | null };
   } catch (error) {
     if (ctx) logError(ctx, "image.exception", error, { title: meal.title }); else console.warn("Meal image generation skipped", error);
     return { ...meal, imageStatus: "failed" };
@@ -690,6 +1059,7 @@ function mealFromFirestore(data: any): MealAnalysis {
     protein: typeof item?.protein === "number" ? clampNumber(item.protein) : null,
     carbs: typeof item?.carbs === "number" ? clampNumber(item.carbs) : null,
     fat: typeof item?.fat === "number" ? clampNumber(item.fat) : null,
+    nutritionDetails: normalizeAdvancedNutritionDetails(item),
     confidence: Math.min(1, Math.max(0, typeof item?.confidence === "number" ? item.confidence : 0.65))
   }));
 
@@ -704,13 +1074,17 @@ function mealFromFirestore(data: any): MealAnalysis {
       carbs: typeof macros.carbs === "number" ? macros.carbs : 0,
       fat: typeof macros.fat === "number" ? macros.fat : 0
     },
+    nutritionDetails: data.nutritionDetails ?? data.nutrients ?? null,
     confidence: typeof data.confidence === "number" ? data.confidence : 0.65,
     assistantSummary: typeof data.assistantNote === "string" ? data.assistantNote : "Logged.",
     needsClarification: false,
     photoPath: typeof data.photoPath === "string" ? data.photoPath : null,
     imageURL: typeof data.imageURL === "string" ? data.imageURL : null,
     foodCategory: typeof data.foodCategory === "string" ? data.foodCategory : null,
-    imageStatus: typeof data.imageStatus === "string" ? data.imageStatus : null
+    imageStatus: typeof data.imageStatus === "string" ? data.imageStatus : null,
+    imageKind: typeof data.imageKind === "string" ? data.imageKind : null,
+    imageStyleVersion: typeof data.imageStyleVersion === "string" ? data.imageStyleVersion : null,
+    imageAlpha: typeof data.imageAlpha === "string" ? data.imageAlpha : null
   });
 }
 
@@ -764,6 +1138,239 @@ function httpHandler(endpoint: string, handler: (data: any, ctx: RequestLog) => 
 const publicOptions256 = { region, timeoutSeconds: 30, memory: "256MiB" as const, invoker: "public" as const };
 const publicOptions1G = { region, timeoutSeconds: 240, memory: "1GiB" as const, invoker: "public" as const };
 const publicOptionsLong = { region, timeoutSeconds: 540, memory: "1GiB" as const, invoker: "public" as const };
+
+
+type GoalRecommendationProfile = {
+  age?: number;
+  sex?: string;
+  heightCm?: number;
+  heightFt?: number;
+  heightIn?: number;
+  weightKg?: number;
+  weightLb?: number;
+  activityLevel?: string;
+  trainingDaysPerWeek?: number;
+  goal?: string;
+  pace?: string;
+  dietaryPreference?: string;
+  experience?: string;
+};
+
+function goalRecommendationSchema() {
+  return {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      dailyCalories: { type: "integer", minimum: 900, maximum: 7000 },
+      dailyProtein: { type: "integer", minimum: 20, maximum: 350 },
+      calorieRangeLow: { type: "integer", minimum: 900, maximum: 7000 },
+      calorieRangeHigh: { type: "integer", minimum: 900, maximum: 7000 },
+      proteinRangeLow: { type: "integer", minimum: 20, maximum: 350 },
+      proteinRangeHigh: { type: "integer", minimum: 20, maximum: 350 },
+      goalLabel: { type: "string" },
+      summary: { type: "string" },
+      reasoningBullets: { type: "array", minItems: 2, maxItems: 5, items: { type: "string" } },
+      confidence: { type: "number", minimum: 0, maximum: 1 },
+      needsProfessionalGuidance: { type: "boolean" },
+      safetyNote: { type: "string" }
+    },
+    required: [
+      "dailyCalories",
+      "dailyProtein",
+      "calorieRangeLow",
+      "calorieRangeHigh",
+      "proteinRangeLow",
+      "proteinRangeHigh",
+      "goalLabel",
+      "summary",
+      "reasoningBullets",
+      "confidence",
+      "needsProfessionalGuidance",
+      "safetyNote"
+    ]
+  };
+}
+
+function numberOrNull(value: any): number | null {
+  const n = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function clampGoalValue(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, Math.round(value)));
+}
+
+function normalizeGoalProfile(raw: any): GoalRecommendationProfile {
+  const profile = raw?.profile && typeof raw.profile === "object" ? raw.profile : raw ?? {};
+  const heightCm = numberOrNull(profile.heightCm ?? profile.height_cm ?? profile.height);
+  const heightFt = numberOrNull(profile.heightFt ?? profile.height_ft);
+  const heightIn = numberOrNull(profile.heightIn ?? profile.height_in);
+  const weightKg = numberOrNull(profile.weightKg ?? profile.weight_kg);
+  const weightLb = numberOrNull(profile.weightLb ?? profile.weight_lb ?? profile.weight);
+  const age = numberOrNull(profile.age);
+  const trainingDaysPerWeek = numberOrNull(profile.trainingDaysPerWeek ?? profile.trainingDays ?? profile.training_days_per_week);
+  return {
+    age: age == null ? undefined : clampGoalValue(age, 13, 100),
+    sex: typeof profile.sex === "string" ? profile.sex.toLowerCase() : undefined,
+    heightCm: heightCm == null ? undefined : clampGoalValue(heightCm, 120, 230),
+    heightFt: heightFt == null ? undefined : clampGoalValue(heightFt, 3, 8),
+    heightIn: heightIn == null ? undefined : clampGoalValue(heightIn, 0, 11),
+    weightKg: weightKg == null ? undefined : clampGoalValue(weightKg, 35, 300),
+    weightLb: weightLb == null ? undefined : clampGoalValue(weightLb, 75, 660),
+    activityLevel: typeof profile.activityLevel === "string" ? profile.activityLevel : typeof profile.activity === "string" ? profile.activity : undefined,
+    trainingDaysPerWeek: trainingDaysPerWeek == null ? undefined : clampGoalValue(trainingDaysPerWeek, 0, 7),
+    goal: typeof profile.goal === "string" ? profile.goal : undefined,
+    pace: typeof profile.pace === "string" ? profile.pace : undefined,
+    dietaryPreference: typeof profile.dietaryPreference === "string" ? profile.dietaryPreference : typeof profile.diet === "string" ? profile.diet : undefined,
+    experience: typeof profile.experience === "string" ? profile.experience : undefined
+  };
+}
+
+function kgFromProfile(profile: GoalRecommendationProfile): number | null {
+  if (typeof profile.weightKg === "number") return profile.weightKg;
+  if (typeof profile.weightLb === "number") return profile.weightLb * 0.45359237;
+  return null;
+}
+
+function cmFromProfile(profile: GoalRecommendationProfile): number | null {
+  if (typeof profile.heightCm === "number") return profile.heightCm;
+  if (typeof profile.heightFt === "number") {
+    return ((profile.heightFt * 12) + (profile.heightIn ?? 0)) * 2.54;
+  }
+  return null;
+}
+
+function activityMultiplier(level?: string): number {
+  const normalized = String(level ?? "").toLowerCase();
+  if (/very|athlete|intense|hard/.test(normalized)) return 1.725;
+  if (/active|heavy|daily/.test(normalized)) return 1.55;
+  if (/moderate|medium|some/.test(normalized)) return 1.45;
+  if (/light|walk|easy/.test(normalized)) return 1.35;
+  return 1.2;
+}
+
+function goalAdjustment(goal?: string, pace?: string): number {
+  const g = String(goal ?? "").toLowerCase();
+  const p = String(pace ?? "").toLowerCase();
+  const aggressive = /fast|aggressive/.test(p);
+  const gentle = /slow|gentle|easy/.test(p);
+  if (/lose|fat|cut|deficit/.test(g)) return aggressive ? -500 : gentle ? -250 : -350;
+  if (/gain|bulk|muscle|build/.test(g)) return aggressive ? 350 : gentle ? 150 : 250;
+  return 0;
+}
+
+function deterministicGoalEstimate(profile: GoalRecommendationProfile) {
+  const kg = kgFromProfile(profile);
+  const cm = cmFromProfile(profile);
+  const age = profile.age;
+  const sex = String(profile.sex ?? "").toLowerCase();
+  const isAdult = typeof age === "number" && age >= 18;
+
+  let bmr: number | null = null;
+  if (kg && cm && age) {
+    const sexOffset = /female|woman/.test(sex) ? -161 : /male|man/.test(sex) ? 5 : -78;
+    bmr = (10 * kg) + (6.25 * cm) - (5 * age) + sexOffset;
+  }
+
+  const tdee = bmr ? bmr * activityMultiplier(profile.activityLevel) : 2200;
+  let calories = tdee + goalAdjustment(profile.goal, profile.pace);
+  const floor = /male|man/.test(sex) ? 1500 : 1200;
+  if (isAdult) calories = Math.max(floor, calories);
+  if (!isAdult && age) calories = Math.max(1600, tdee);
+  calories = clampGoalValue(Math.round(calories / 25) * 25, 1000, 6500);
+
+  const trainingDays = profile.trainingDaysPerWeek ?? 0;
+  const goalText = String(profile.goal ?? "").toLowerCase();
+  let proteinPerKg = 1.2;
+  if (/lose|fat|cut|muscle|gain|bulk|build/.test(goalText)) proteinPerKg = 1.6;
+  if (trainingDays >= 4) proteinPerKg = Math.max(proteinPerKg, 1.7);
+  if (trainingDays <= 1 && /maintain/.test(goalText)) proteinPerKg = 1.1;
+  let protein = kg ? kg * proteinPerKg : 120;
+  protein = clampGoalValue(Math.round(protein / 5) * 5, 45, 240);
+
+  return {
+    dailyCalories: calories,
+    dailyProtein: protein,
+    calorieRangeLow: clampGoalValue(calories - 150, 900, 6500),
+    calorieRangeHigh: clampGoalValue(calories + 150, 900, 6500),
+    proteinRangeLow: clampGoalValue(protein - 15, 20, 300),
+    proteinRangeHigh: clampGoalValue(protein + 15, 20, 300),
+    goalLabel: profile.goal || "Balanced daily target",
+    summary: `A practical starting point is ${calories} calories and ${protein}g protein per day. Adjust over time based on real progress and how you feel.`,
+    reasoningBullets: [
+      "Estimated from your body size, activity, and goal.",
+      "Protein is set to support fullness and lean-mass retention.",
+      "Treat this as a starting target, not a medical prescription."
+    ],
+    confidence: bmr ? 0.72 : 0.45,
+    needsProfessionalGuidance: Boolean(age && age < 18),
+    safetyNote: "MealRecap provides general nutrition estimates only, not medical advice. For medical conditions, pregnancy, eating disorder history, or age under 18, consult a qualified professional."
+  };
+}
+
+async function recommendGoalsHandler(data: any, ctx: RequestLog) {
+  const uid = resolveUserID(data);
+  const profile = normalizeGoalProfile(data);
+  const fallback = deterministicGoalEstimate(profile);
+  logStep(ctx, "goal.recommend.start", {
+    uid,
+    hasAge: typeof profile.age === "number",
+    hasHeight: Boolean(cmFromProfile(profile)),
+    hasWeight: Boolean(kgFromProfile(profile)),
+    activityLevel: profile.activityLevel ?? null,
+    goal: profile.goal ?? null
+  });
+
+  if (profile.age && profile.age < 18) {
+    logStep(ctx, "goal.recommend.minorFallback");
+    await recordBackendLog(uid, "recommendGoals:minorFallback");
+    return fallback;
+  }
+
+  try {
+    const raw = await callOpenAI([
+      {
+        role: "system",
+        content: "You are MealRecap's nutrition goal assistant. Recommend practical daily calorie and protein targets for a general wellness food logging app. Use the deterministic estimate as the anchor. Be conservative, avoid medical claims, avoid extreme deficits, and return only JSON matching the schema. This is not medical advice."
+      },
+      {
+        role: "user",
+        content: JSON.stringify({
+          task: "recommend_daily_calorie_and_protein_goals",
+          profile,
+          deterministicEstimate: fallback,
+          rules: [
+            "Keep calories realistic and not extreme.",
+            "Protein should be practical for the user's body size and training pattern.",
+            "Use warm, short, non-medical language.",
+            "If the profile lacks key data, stay close to the deterministic estimate and lower confidence.",
+            "Do not diagnose, treat, or guarantee weight change."
+          ]
+        })
+      }
+    ], goalRecommendationSchema(), "goal_recommendation", OPENAI_API_KEY.value());
+
+    const result = {
+      ...fallback,
+      ...raw,
+      dailyCalories: clampGoalValue(raw.dailyCalories, 1000, 6500),
+      dailyProtein: clampGoalValue(raw.dailyProtein, 45, 240),
+      calorieRangeLow: clampGoalValue(raw.calorieRangeLow, 900, 6500),
+      calorieRangeHigh: clampGoalValue(raw.calorieRangeHigh, 900, 6500),
+      proteinRangeLow: clampGoalValue(raw.proteinRangeLow, 20, 300),
+      proteinRangeHigh: clampGoalValue(raw.proteinRangeHigh, 20, 300),
+      confidence: Math.min(1, Math.max(0, typeof raw.confidence === "number" ? raw.confidence : fallback.confidence)),
+      needsProfessionalGuidance: Boolean(raw.needsProfessionalGuidance)
+    };
+    await recordBackendLog(uid, "recommendGoals");
+    logStep(ctx, "goal.recommend.done", { calories: result.dailyCalories, protein: result.dailyProtein, confidence: result.confidence });
+    return result;
+  } catch (error) {
+    logError(ctx, "goal.recommend.openaiFailed", error);
+    await recordBackendLog(uid, "recommendGoals:fallback");
+    return fallback;
+  }
+}
 
 
 async function pingHandler(data: any, ctx: RequestLog) {
@@ -954,6 +1561,7 @@ async function analyzeMealPhotoHandler(data: any, ctx: RequestLog) {
 // v24 public endpoints. These are the only active backend endpoints the iOS app should call.
 // Legacy aliases were intentionally removed to reduce Cloud Run CPU usage and avoid stale function behavior.
 export const mrv24Ping = onRequest(publicOptions256, httpHandler("mrv24Ping", pingHandler));
+export const mrv24RecommendGoals = onRequest({ ...publicOptions1G, secrets: [OPENAI_API_KEY], timeoutSeconds: 90 }, httpHandler("mrv24RecommendGoals", recommendGoalsHandler));
 export const mrv24GenerateMealImage = onRequest({ ...publicOptions1G, secrets: [GEMINI_API_KEY] }, httpHandler("mrv24GenerateMealImage", generateMealImageHandler));
 export const mrv24BackfillMealImages = onRequest({ ...publicOptionsLong, secrets: [GEMINI_API_KEY] }, httpHandler("mrv24BackfillMealImages", backfillMealImagesHandler));
 export const mrv24AnalyzeMealText = onRequest({ ...publicOptions1G, secrets: [OPENAI_API_KEY, USDA_API_KEY, GEMINI_API_KEY], timeoutSeconds: 180 }, httpHandler("mrv24AnalyzeMealText", analyzeMealTextHandler));

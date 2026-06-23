@@ -170,7 +170,7 @@ struct FocusedComposerView: View {
             let horizontalPadding: CGFloat = 20
             let contentWidth = max(0, viewportWidth - horizontalPadding * 2)
 
-            ZStack(alignment: .bottom) {
+            ZStack {
                 AmbientBackground()
                     .frame(width: viewportWidth, height: viewportHeight)
 
@@ -199,31 +199,45 @@ struct FocusedComposerView: View {
                     .padding(.horizontal, horizontalPadding)
                     .frame(width: viewportWidth, alignment: .center)
                     .padding(.top, proxy.safeAreaInsets.top + 44)
-                    .padding(.bottom, 128 + proxy.safeAreaInsets.bottom)
+                    .padding(.bottom, 22)
                 }
                 .frame(width: viewportWidth)
                 .scrollDismissesKeyboard(.interactively)
-                .ignoresSafeArea(.container, edges: [.top, .bottom])
+                .ignoresSafeArea(.container, edges: .top)
                 .contentMargins(.top, 0, for: .scrollContent)
                 .contentMargins(.bottom, 0, for: .scrollContent)
-
-                bottomDock
-                    .frame(maxWidth: contentWidth)
-                    .padding(.horizontal, 18)
-                    .frame(width: viewportWidth)
-                    .padding(.bottom, max(16, proxy.safeAreaInsets.bottom + 8))
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    bottomDock
+                        .frame(maxWidth: contentWidth)
+                        .padding(.horizontal, 18)
+                        .padding(.top, 8)
+                        .padding(.bottom, 12)
+                        .frame(width: viewportWidth)
+                        .background {
+                            Rectangle()
+                                .fill(.ultraThinMaterial.opacity(0.32))
+                                .mask(
+                                    LinearGradient(
+                                        colors: [.clear, .black.opacity(0.92), .black],
+                                        startPoint: .top,
+                                        endPoint: .bottom
+                                    )
+                                )
+                                .ignoresSafeArea(edges: .bottom)
+                        }
+                }
             }
             .frame(width: viewportWidth, height: viewportHeight)
         }
-        .ignoresSafeArea(.container, edges: [.top, .bottom])
+        .ignoresSafeArea(.container, edges: .top)
         .onAppear { focused = true }
         .interactiveDismissDisabled(isSubmitting)
     }
 
     private var focusedHeader: some View {
         HStack {
-            MealRecapWordmark()
-            .layoutPriority(1)
+            MealRecapBrandLockup(compact: true, markSize: 36)
+                .layoutPriority(1)
 
             Spacer(minLength: 12)
             Button { dismiss() } label: {

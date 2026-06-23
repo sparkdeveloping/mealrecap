@@ -32,6 +32,49 @@ enum MRSpace {
     static let stack: CGFloat = 14
 }
 
+struct MealRecapLogoMark: View {
+    var size: CGFloat = 48
+    var glass: Bool = true
+
+    var body: some View {
+        Image("MealRecapLogoIcon")
+            .resizable()
+            .scaledToFit()
+//            .padding(size * 0.16)
+            .frame(width: size, height: size)
+//            .background {
+//                if glass {
+//                    Circle()
+//                        .fill(.regularMaterial)
+//                        .overlay(Circle().fill(MRColor.backgroundTop.opacity(0.24)))
+//                }
+//            }
+            .clipShape(Circle())
+//            .overlay {
+//                if glass {
+//                    Circle()
+//                        .stroke(.white.opacity(0.62), lineWidth: 1)
+//                }
+//            }
+//            .shadow(color: MRColor.accentDeep.opacity(glass ? 0.12 : 0), radius: glass ? 18 : 0, x: 0, y: glass ? 10 : 0)
+            .accessibilityHidden(true)
+    }
+}
+
+struct MealRecapBrandLockup: View {
+    var compact = false
+    var markSize: CGFloat? = nil
+
+    var body: some View {
+        HStack(spacing: compact ? 8 : 11) {
+            MealRecapLogoMark(size: markSize ?? (compact ? 34 : 46))
+            MealRecapWordmark(compact: compact)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("MealRecap")
+    }
+}
+
 struct MealRecapWordmark: View {
     var compact = false
 
@@ -349,9 +392,8 @@ enum MRMath {
 struct AmbientBackground: View {
     var includeBaseFill = true
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
-    @State private var drift = false
+    private let drift = false
 
     var body: some View {
         GeometryReader { proxy in
@@ -425,12 +467,6 @@ struct AmbientBackground: View {
         }
         .ignoresSafeArea()
         .allowsHitTesting(false)
-        .onAppear {
-            guard !reduceMotion else { return }
-            withAnimation(.easeInOut(duration: 22).repeatForever(autoreverses: true)) {
-                drift = true
-            }
-        }
     }
 
     private func ambientBlob(color: Color, opacity: Double, width: CGFloat, height: CGFloat, x: CGFloat, y: CGFloat, blur: CGFloat) -> some View {

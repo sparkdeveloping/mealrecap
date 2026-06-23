@@ -8,9 +8,9 @@ struct MinimalMealRow: View {
     var prompt: String? = nil
     let onTap: () -> Void
 
-    private var percentOfDay: Int {
-        let total = max(day?.caloriesIn ?? meal.calories, 1)
-        return Int((Double(meal.calories) / Double(total) * 100).rounded())
+    private var percentOfGoal: Int {
+        let goal = max(day?.goalCalories ?? 2200, 1)
+        return Int((Double(meal.calories) / Double(goal) * 100).rounded())
     }
 
     var body: some View {
@@ -82,7 +82,7 @@ struct MinimalMealRow: View {
                             .font(.mrMicro)
                             .tracking(1.5)
                             .foregroundStyle(MRColor.tertiaryText)
-                        Text("\(percentOfDay)% day")
+                        Text("\(percentOfGoal)% goal")
                             .font(.system(size: 9, weight: .bold, design: .rounded))
                             .foregroundStyle(MRColor.secondaryText)
                             .lineLimit(1)
@@ -118,8 +118,20 @@ struct MinimalMealRow: View {
     }
 
     private var label: String {
-        if let foodCategory = meal.foodCategory, !foodCategory.isEmpty { return foodCategory }
+        if let foodCategory = meal.foodCategory?.trimmingCharacters(in: .whitespacesAndNewlines), !foodCategory.isEmpty {
+            return displayCategory(foodCategory)
+        }
         return meal.mealType.title
+    }
+
+    private func displayCategory(_ rawValue: String) -> String {
+        let lowercased = rawValue.lowercased()
+        if lowercased.contains("beverage") || lowercased.contains("drink") { return "Beverage" }
+        if lowercased.contains("protein") { return "Protein" }
+        if lowercased.contains("snack") { return "Snack" }
+        if lowercased.contains("dessert") { return "Dessert" }
+        if rawValue.count > 14 { return meal.mealType == .unknown ? "Mixed" : meal.mealType.title }
+        return rawValue
     }
 
     private var subtitle: String {
@@ -187,9 +199,9 @@ struct MealDetailFullScreen: View {
         note.trimmingCharacters(in: .whitespacesAndNewlines) != (meal.assistantNote ?? "")
     }
 
-    private var percentOfDay: Int {
-        let total = max(day?.caloriesIn ?? meal.calories, 1)
-        return Int((Double(meal.calories) / Double(total) * 100).rounded())
+    private var percentOfGoal: Int {
+        let goal = max(day?.goalCalories ?? 2200, 1)
+        return Int((Double(meal.calories) / Double(goal) * 100).rounded())
     }
 
     var body: some View {
@@ -206,13 +218,19 @@ struct MealDetailFullScreen: View {
                 ScrollView(showsIndicators: false) {
                     VStack(alignment: .leading, spacing: 18) {
                         heroSection
-                            .padding(.top, proxy.safeAreaInsets.top + 58)
+                            .padding(.top, proxy.safeAreaInsets.top + 72)
 
                         macroSection
 
+                        if let nutritionDetails = meal.nutritionDetails, nutritionDetails.hasAdvancedNutrients {
+                            NutritionDetailsCard(details: nutritionDetails)
+                        }
+
                         detailsSection
 
-                        itemsSection
+                        if !displayItems.isEmpty {
+                            itemsSection
+                        }
 
                         actionSection
 
@@ -229,7 +247,7 @@ struct MealDetailFullScreen: View {
 
                 topControls
                     .padding(.horizontal, horizontalPadding)
-                    .padding(.top, proxy.safeAreaInsets.top + 10)
+                    .padding(.top, proxy.safeAreaInsets.top + 40)
                     .frame(width: viewportWidth)
             }
             .frame(width: viewportWidth, height: viewportHeight)
@@ -279,7 +297,7 @@ struct MealDetailFullScreen: View {
                     .foregroundStyle(MRColor.secondaryText)
             }
 
-            Text("\(percentOfDay)% of the day · \(meal.createdAt.formatted(date: .omitted, time: .shortened))")
+            Text("\(percentOfGoal)% of goal · \(meal.createdAt.formatted(date: .omitted, time: .shortened))")
                 .font(.mrMicro)
                 .tracking(1.6)
                 .foregroundStyle(MRColor.tertiaryText)
@@ -344,8 +362,8 @@ struct MealDetailFullScreen: View {
 
     private var itemsSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            sectionTitle("Items")
-            ForEach(meal.items) { item in
+            sectionTitle("Ingredients")
+            ForEach(displayItems) { item in
                 HStack(alignment: .firstTextBaseline, spacing: 12) {
                     VStack(alignment: .leading, spacing: 3) {
                         Text(item.name)
@@ -358,6 +376,20 @@ struct MealDetailFullScreen: View {
                                 .foregroundStyle(MRColor.secondaryText)
                                 .lineLimit(2)
                         }
+                        if let macroText = item.macroSummaryText {
+                            Text(macroText)
+                                .font(.mrMicro)
+                                .tracking(1.1)
+                                .foregroundStyle(MRColor.tertiaryText)
+                                .lineLimit(1)
+                        }
+                        if let details = item.nutritionDetails, let summary = NutritionDisplay.summary(for: details, limit: 2) {
+                            Text(summary)
+                                .font(.mrMicro)
+                                .tracking(1.0)
+                                .foregroundStyle(MRColor.tertiaryText)
+                                .lineLimit(2)
+                        }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     Text("\(item.calories) cal")
@@ -368,7 +400,7 @@ struct MealDetailFullScreen: View {
                         .frame(minWidth: 62, alignment: .trailing)
                 }
                 .padding(.vertical, 7)
-                if item.id != meal.items.last?.id {
+                if item.id != displayItems.last?.id {
                     Divider().background(MRColor.line.opacity(0.35))
                 }
             }
@@ -466,6 +498,14 @@ struct MealDetailFullScreen: View {
         return meal.mealType.title
     }
 
+    private var displayItems: [FoodItem] {
+        let filtered = meal.items.filter { $0.hasDisplayableIngredientName }
+        if filtered.isEmpty, meal.items.count == 1, meal.items.first?.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "food item" {
+            return meal.items
+        }
+        return filtered
+    }
+
     private func save() {
         guard !isSaving, hasChanges else { return }
         isSaving = true
@@ -508,6 +548,49 @@ private struct MacroLine: View {
     }
 }
 
+private struct NutritionDetailsCard: View {
+    let details: NutritionDetails
+
+    private var rows: [(String, String)] {
+        NutritionDisplay.rows(for: details)
+    }
+
+    private let columns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 2)
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("More nutrition")
+                .font(.mrHeadline)
+                .foregroundStyle(MRColor.text)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            LazyVGrid(columns: columns, spacing: 8) {
+                ForEach(rows, id: \.0) { row in
+                    HStack {
+                        Text(row.0)
+                            .font(.mrSmall)
+                            .foregroundStyle(MRColor.secondaryText)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.78)
+                        Spacer(minLength: 6)
+                        Text(row.1)
+                            .font(.mrSmall.weight(.bold))
+                            .foregroundStyle(MRColor.text)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.76)
+                    }
+                    .padding(.horizontal, 10)
+                    .frame(minHeight: 40)
+                    .background(.white.opacity(0.24), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                }
+            }
+        }
+        .padding(18)
+        .background(.white.opacity(0.26), in: RoundedRectangle(cornerRadius: 26, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 26, style: .continuous).stroke(.white.opacity(0.50), lineWidth: 1))
+    }
+}
+
 private struct MealTypeChips: View {
     @Binding var selection: MealType
 
@@ -523,20 +606,25 @@ private struct MealTypeChips: View {
                             .lineLimit(1)
                             .foregroundStyle(selection == type ? .white : MRColor.text)
                             .padding(.horizontal, 15)
-                            .frame(minHeight: 40)
-                            .glassCapsule(
-                                tint: selection == type ? MRColor.accentDeep.opacity(0.55) : MRColor.backgroundTop.opacity(0.08),
-                                strokeOpacity: selection == type ? 0.42 : 0.34,
-                                shadowOpacity: selection == type ? 0.06 : 0.025
+                            .frame(minHeight: 42)
+                            .background(
+                                Capsule()
+                                    .fill(selection == type ? MRColor.accentDeep : MRColor.card.opacity(0.48))
+                                    .background(.thinMaterial, in: Capsule())
                             )
+                            .overlay(
+                                Capsule()
+                                    .stroke(.white.opacity(selection == type ? 0.42 : 0.56), lineWidth: 1)
+                            )
+                            .shadow(color: MRColor.text.opacity(selection == type ? 0.07 : 0.025), radius: 12, x: 0, y: 7)
                             .contentShape(Capsule())
                     }
                     .buttonStyle(PressablePolish())
                     .accessibilityLabel(type.title)
                 }
             }
-            .padding(.horizontal, 2)
-            .padding(.vertical, 6)
+            .padding(.horizontal, 3)
+            .padding(.vertical, 10)
         }
         .frame(maxWidth: .infinity)
         .scrollClipDisabled()

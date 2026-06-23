@@ -40,6 +40,23 @@ final class FunctionsService: @unchecked Sendable {
         return raw as? [String: Any] ?? [:]
     }
 
+    func recommendGoals(profile: GoalRecommendationProfile) async throws -> GoalRecommendation {
+        var profilePayload: [String: Any] = [
+            "age": profile.age,
+            "sex": profile.sex,
+            "heightCm": profile.heightCm,
+            "weightKg": profile.weightKg,
+            "activityLevel": profile.activityLevel,
+            "trainingDaysPerWeek": profile.trainingDaysPerWeek,
+            "goal": profile.goal
+        ]
+        if let pace = profile.pace, !pace.isEmpty {
+            profilePayload["pace"] = pace
+        }
+        let raw = try await call("recommendGoals", payload: ["profile": profilePayload])
+        return try Self.decodeGoalRecommendation(raw)
+    }
+
     @discardableResult
     func generateMealImage(uid: String, date: Date, meal: MealEntry) async throws -> [String: Any] {
         let itemMaps: [[String: Any]] = meal.items.map { item in
@@ -54,6 +71,9 @@ final class FunctionsService: @unchecked Sendable {
             if let protein = item.protein { map["protein"] = protein }
             if let carbs = item.carbs { map["carbs"] = carbs }
             if let fat = item.fat { map["fat"] = fat }
+            if let nutritionDetails = item.nutritionDetails?.firestoreData, !nutritionDetails.isEmpty {
+                map["nutritionDetails"] = nutritionDetails
+            }
             return map
         }
 
@@ -70,6 +90,9 @@ final class FunctionsService: @unchecked Sendable {
         ]
         if let photoPath = meal.photoPath { payload["photoPath"] = photoPath }
         if let foodCategory = meal.foodCategory { payload["foodCategory"] = foodCategory }
+        if let nutritionDetails = meal.nutritionDetails?.firestoreData, !nutritionDetails.isEmpty {
+            payload["nutritionDetails"] = nutritionDetails
+        }
 
         let raw = try await call("generateMealImage", payload: payload)
         return raw as? [String: Any] ?? [:]
@@ -94,6 +117,7 @@ final class FunctionsService: @unchecked Sendable {
         case "analyzeMealPhoto": return "mrv24AnalyzeMealPhoto"
         case "generateMealImage": return "mrv24GenerateMealImage"
         case "backfillMealImages": return "mrv24BackfillMealImages"
+        case "recommendGoals": return "mrv24RecommendGoals"
         default: return logicalName
         }
     }
@@ -159,7 +183,8 @@ final class FunctionsService: @unchecked Sendable {
                 protein: item["protein"] as? Double,
                 carbs: item["carbs"] as? Double,
                 fat: item["fat"] as? Double,
-                confidence: item["confidence"] as? Double ?? 0.7
+                confidence: item["confidence"] as? Double ?? 0.7,
+                nutritionDetails: NutritionDetails.from(item["nutritionDetails"])
             )
         }
         let macros = dict["macros"] as? [String: Any]
@@ -175,7 +200,30 @@ final class FunctionsService: @unchecked Sendable {
             photoPath: dict["photoPath"] as? String,
             imageURL: dict["imageURL"] as? String,
             foodCategory: dict["foodCategory"] as? String,
-            imageStatus: dict["imageStatus"] as? String
+            imageStatus: dict["imageStatus"] as? String,
+            imageKind: dict["imageKind"] as? String,
+            imageAlpha: dict["imageAlpha"] as? String,
+            imageStyleVersion: dict["imageStyleVersion"] as? String,
+            nutritionDetails: NutritionDetails.from(dict["nutritionDetails"])
+        )
+    }
+
+    private static func decodeGoalRecommendation(_ raw: Any) throws -> GoalRecommendation {
+        guard let dict = raw as? [String: Any] else { throw FunctionDecodeError.invalidResponse }
+        let bullets = dict["reasoningBullets"] as? [String] ?? []
+        return GoalRecommendation(
+            dailyCalories: dict["dailyCalories"] as? Int ?? 2200,
+            dailyProtein: dict["dailyProtein"] as? Int ?? 140,
+            calorieRangeLow: dict["calorieRangeLow"] as? Int,
+            calorieRangeHigh: dict["calorieRangeHigh"] as? Int,
+            proteinRangeLow: dict["proteinRangeLow"] as? Int,
+            proteinRangeHigh: dict["proteinRangeHigh"] as? Int,
+            goalLabel: dict["goalLabel"] as? String ?? "Smart starting point",
+            summary: dict["summary"] as? String ?? "MealRecap estimated a simple starting target from your answers. You can adjust anytime.",
+            reasoningBullets: bullets,
+            confidence: dict["confidence"] as? Double,
+            needsProfessionalGuidance: dict["needsProfessionalGuidance"] as? Bool ?? false,
+            safetyNote: dict["safetyNote"] as? String
         )
     }
 

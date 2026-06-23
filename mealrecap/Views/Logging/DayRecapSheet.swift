@@ -5,6 +5,7 @@ struct DayRecapSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var text = ""
     @State private var isWorking = false
+    @State private var pendingReview: PendingDayReview?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -40,10 +41,13 @@ struct DayRecapSheet: View {
                 guard !trimmed.isEmpty else { return }
                 isWorking = true
                 Task {
-                    await app.logDayRecap(trimmed)
-                    app.markPaywallMilestoneIfNeeded(.firstRecapSuccess)
-                    isWorking = false
-                    dismiss()
+                    let pending = await app.analyzeDayRecapForReview(trimmed)
+                    await MainActor.run {
+                        isWorking = false
+                        if let pending {
+                            pendingReview = pending
+                        }
+                    }
                 }
             } label: {
                 HStack {
@@ -66,5 +70,12 @@ struct DayRecapSheet: View {
             AmbientBackground()
         )
         .ignoresSafeArea(.container, edges: [.top, .bottom])
+        .fullScreenCover(item: $pendingReview) { pending in
+            ReviewDayView(pending: pending) {
+                app.markPaywallMilestoneIfNeeded(.firstRecapSuccess)
+                dismiss()
+            }
+            .environmentObject(app)
+        }
     }
 }

@@ -15,7 +15,7 @@ struct MealVisual: View {
     @State private var didFailToLoad = false
 
     private var sourceKey: String {
-        [meal.imageURL ?? "", meal.photoPath ?? "", meal.imageStatus ?? "", "\(meal.updatedAt.timeIntervalSince1970)"].joined(separator: "|")
+        [meal.imageURL ?? "", meal.photoPath ?? "", meal.imageStatus ?? "", meal.imageKind ?? "", meal.imageAlpha ?? "", meal.imageStyleVersion ?? "", "\(meal.updatedAt.timeIntervalSince1970)"].joined(separator: "|")
     }
 
     private var effectiveImageStatus: String {
@@ -28,6 +28,14 @@ struct MealVisual: View {
         return meal.imageStatus ?? "none"
     }
 
+    private var usesAppBackgroundImageMode: Bool {
+        guard meal.source != .camera else { return false }
+        let kind = meal.imageKind?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let alpha = meal.imageAlpha?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let style = meal.imageStyleVersion?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return kind == "appbackground" || alpha == "appbackground" || style == "app-background-v1"
+    }
+
     var body: some View {
         ZStack {
             if let resolvedURL {
@@ -36,10 +44,7 @@ struct MealVisual: View {
                     case .empty:
                         loadingPlaceholder
                     case .success(let image):
-                        image
-                            .resizable()
-                            .scaledToFill()
-                            .transition(.opacity.combined(with: .scale(scale: 0.985)))
+                        readyImage(image)
                     case .failure(let error):
                         failedPlaceholder(error: error)
                     @unknown default:
@@ -53,12 +58,7 @@ struct MealVisual: View {
             }
         }
         .frame(width: size, height: size)
-        .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                .stroke(.white.opacity(0.82), lineWidth: 1)
-        )
-        .shadow(color: MRColor.text.opacity(0.08), radius: 14, x: 0, y: 10)
+        .contentShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
         .task(id: sourceKey) { await loadImageURL() }
         .onTapGesture {
             if effectiveImageStatus == "failed" {
@@ -66,6 +66,56 @@ struct MealVisual: View {
             }
         }
         .accessibilityLabel(accessibilityText)
+    }
+
+    @ViewBuilder
+    private func readyImage(_ image: Image) -> some View {
+        if usesAppBackgroundImageMode {
+            ZStack {
+                Ellipse()
+                    .fill(MRColor.gold.opacity(0.08))
+                    .frame(width: size * 0.76, height: size * 0.28)
+                    .blur(radius: size * 0.14)
+                    .offset(y: size * 0.24)
+
+                image
+                    .resizable()
+                    .interpolation(.high)
+                    .scaledToFit()
+                    .padding(size * 0.02)
+                    .mask(appBackgroundFeatherMask)
+                    .shadow(color: MRColor.text.opacity(0.10), radius: size * 0.08, x: 0, y: size * 0.06)
+            }
+            .transition(.opacity.combined(with: .scale(scale: 0.96)))
+        } else {
+            image
+                .resizable()
+                .interpolation(.high)
+                .scaledToFill()
+                .frame(width: size, height: size)
+                .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                        .stroke(.white.opacity(0.82), lineWidth: 1)
+                )
+                .shadow(color: MRColor.text.opacity(0.08), radius: 14, x: 0, y: 10)
+                .transition(.opacity.combined(with: .scale(scale: 0.985)))
+        }
+    }
+
+    private var appBackgroundFeatherMask: some View {
+        RadialGradient(
+            colors: [
+                .black,
+                .black,
+                .black.opacity(0.96),
+                .black.opacity(0.42),
+                .clear
+            ],
+            center: .center,
+            startRadius: size * 0.28,
+            endRadius: size * 0.72
+        )
     }
 
     private var quietPlaceholder: some View {
@@ -110,6 +160,12 @@ struct MealVisual: View {
                     .offset(x: size * 0.34, y: -size * 0.34)
             }
         }
+        .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .stroke(.white.opacity(0.70), lineWidth: 1)
+        )
+        .shadow(color: MRColor.text.opacity(0.06), radius: 12, x: 0, y: 8)
     }
 
     private var placeholderText: String? {
@@ -151,12 +207,18 @@ struct MealVisual: View {
     private func failedPlaceholder(error: Error) -> some View {
         quietPlaceholder
             .task(id: resolvedURL?.absoluteString) {
+                #if DEBUG
                 print("[MealVisual] failed image request", [
                     "url": resolvedURL?.absoluteString ?? "",
                     "meal": meal.title,
                     "status": effectiveImageStatus,
+                    "imageKind": meal.imageKind ?? "",
+                    "imageAlpha": meal.imageAlpha ?? "",
+                    "imageStyleVersion": meal.imageStyleVersion ?? "",
+                    "photoPath": meal.photoPath ?? "",
                     "error": error.localizedDescription
                 ])
+                #endif
                 await MainActor.run {
                     didFailToLoad = true
                     resolvedURL = nil
@@ -202,7 +264,18 @@ struct MealVisual: View {
                 }
                 return
             } catch {
-                print("[MealVisual] failed storage image", ["path": path, "meal": meal.title, "status": effectiveImageStatus, "error": error.localizedDescription])
+                #if DEBUG
+                print("[MealVisual] failed storage image", [
+                    "path": path,
+                    "meal": meal.title,
+                    "status": effectiveImageStatus,
+                    "imageKind": meal.imageKind ?? "",
+                    "imageAlpha": meal.imageAlpha ?? "",
+                    "imageStyleVersion": meal.imageStyleVersion ?? "",
+                    "hasImageURL": meal.imageURL?.isEmpty == false,
+                    "error": error.localizedDescription
+                ])
+                #endif
             }
         }
 
@@ -211,12 +284,17 @@ struct MealVisual: View {
             didFailToLoad = effectiveImageStatus == "ready"
         }
         if effectiveImageStatus == "ready" {
+            #if DEBUG
             print("[MealVisual] ready image missing usable source", [
                 "meal": meal.title,
                 "photoPath": meal.photoPath ?? "",
                 "imageURL": meal.imageURL ?? "",
-                "status": meal.imageStatus ?? ""
+                "status": meal.imageStatus ?? "",
+                "imageKind": meal.imageKind ?? "",
+                "imageAlpha": meal.imageAlpha ?? "",
+                "imageStyleVersion": meal.imageStyleVersion ?? ""
             ])
+            #endif
         }
     }
 }

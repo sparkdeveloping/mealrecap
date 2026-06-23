@@ -5,6 +5,23 @@ import HealthKit
 final class HealthKitService {
     private let store = HKHealthStore()
 
+    func connectionStatus() -> AppleHealthConnectionStatus {
+        guard HKHealthStore.isHealthDataAvailable() else { return .unavailable }
+        guard let activeEnergy = HKQuantityType.quantityType(forIdentifier: .activeEnergyBurned) else {
+            return .unavailable
+        }
+        switch store.authorizationStatus(for: activeEnergy) {
+        case .sharingAuthorized:
+            return .connected
+        case .sharingDenied:
+            return .permissionDenied
+        case .notDetermined:
+            return .notConnected
+        @unknown default:
+            return .notConnected
+        }
+    }
+
     func requestAuthorization() async throws {
         guard HKHealthStore.isHealthDataAvailable() else { throw HealthKitAccessError.unavailable }
         let readTypes: Set<HKObjectType> = [

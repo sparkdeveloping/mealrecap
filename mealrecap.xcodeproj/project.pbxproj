@@ -13,6 +13,9 @@
 		1C53ADB87F4E13743DBF9E53 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1551966044E6F8F82CEC2EB5 /* AppModel.swift */; };
 		26619BCA2FDD851800490F38 /* StoreKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 26619BC92FDD851800490F38 /* StoreKit.framework */; };
 		26619BCC2FDD857000490F38 /* MealRecap Pro.storekit in Resources */ = {isa = PBXBuildFile; fileRef = 26619BCB2FDD857000490F38 /* MealRecap Pro.storekit */; };
+		26619BCE2FDDEC6900490F38 /* MealHabitReminderService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26619BCD2FDDEC6900490F38 /* MealHabitReminderService.swift */; };
+		269851962FEA78F30066038E /* ReviewMealView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 269851952FEA78F30066038E /* ReviewMealView.swift */; };
+		26CF83E72FEA67D900FB7318 /* NutritionDisplay.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26CF83E62FEA67D900FB7318 /* NutritionDisplay.swift */; };
 		26D3CC0A2FDBDF38007386B9 /* GoogleService-Info.plist in Resources */ = {isa = PBXBuildFile; fileRef = 26D3CC042FDBDF38007386B9 /* GoogleService-Info.plist */; };
 		26D3CC0C2FDBDF38007386B9 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 26D3CC082FDBDF38007386B9 /* PrivacyInfo.xcprivacy */; };
 		27FF4A4B98B261690C722912 /* MealRecapApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16586E9C6D41955B5CD1A701 /* MealRecapApp.swift */; };
@@ -63,6 +66,10 @@
 		18193EA9E86BAEF7ACDD1A09 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		26619BC92FDD851800490F38 /* StoreKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = StoreKit.framework; path = System/Library/Frameworks/StoreKit.framework; sourceTree = SDKROOT; };
 		26619BCB2FDD857000490F38 /* MealRecap Pro.storekit */ = {isa = PBXFileReference; lastKnownFileType = text; path = "MealRecap Pro.storekit"; sourceTree = "<group>"; };
+		26619BCD2FDDEC6900490F38 /* MealHabitReminderService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MealHabitReminderService.swift; sourceTree = "<group>"; };
+		269851952FEA78F30066038E /* ReviewMealView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewMealView.swift; sourceTree = "<group>"; };
+		269851972FEA79530066038E /* AppReviewChecklist.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = AppReviewChecklist.md; sourceTree = "<group>"; };
+		26CF83E62FEA67D900FB7318 /* NutritionDisplay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NutritionDisplay.swift; sourceTree = "<group>"; };
 		26D3CC042FDBDF38007386B9 /* GoogleService-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "GoogleService-Info.plist"; sourceTree = "<group>"; };
 		26D3CC052FDBDF38007386B9 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		26D3CC062FDBDF38007386B9 /* MealRecap.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = MealRecap.entitlements; sourceTree = "<group>"; };
@@ -146,6 +153,7 @@
 				6E74DB75E143BA3B46206409 /* MessageBubble.swift */,
 				7336F439E91AC085298A870E /* ProcessingOverlay.swift */,
 				CF45A4DADFF27FFB10B34BC2 /* ProfileSheet.swift */,
+				26CF83E62FEA67D900FB7318 /* NutritionDisplay.swift */,
 			);
 			path = Components;
 			sourceTree = "<group>";
@@ -153,6 +161,7 @@
 		4497FC5DA1B1CD3E06C83421 /* Design */ = {
 			isa = PBXGroup;
 			children = (
+				AC705870BAB2A526467B2023 /* App */,
 				306B87F2B1D24609F49B8DC0 /* DesignSystem.swift */,
 			);
 			path = Design;
@@ -186,6 +195,7 @@
 				300E84CDF7F3C0F8C3E72F19 /* DayRecapSheet.swift */,
 				4F09469A768D97A1CD907089 /* PhotoLogSheet.swift */,
 				978EE10751EE2C0F34944A6F /* VoiceLogSheet.swift */,
+				269851952FEA78F30066038E /* ReviewMealView.swift */,
 			);
 			path = Logging;
 			sourceTree = "<group>";
@@ -204,6 +214,7 @@
 				EC44AD58AAC2A3E419E905EC /* MealRecap */,
 				26D405472FDC819400C3C4B3 /* Frameworks */,
 				7C92686298302A96A4A9E5AC /* Products */,
+				269851972FEA79530066038E /* AppReviewChecklist.md */,
 			);
 			sourceTree = "<group>";
 		};
@@ -232,6 +243,7 @@
 				51C6794DA4FA8312D1701F3B /* SmartActionService.swift */,
 				373440DC09D61BBFDE967018 /* SpeechService.swift */,
 				E7A63AA1914BB192A974753F /* StoreKitService.swift */,
+				26619BCD2FDDEC6900490F38 /* MealHabitReminderService.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -258,7 +270,6 @@
 			isa = PBXGroup;
 			children = (
 				26D405462FDC818400C3C4B3 /* MealRecap.entitlements */,
-				AC705870BAB2A526467B2023 /* App */,
 				4497FC5DA1B1CD3E06C83421 /* Design */,
 				8150D775993AD023BEC20CEC /* Models */,
 				9E1B8585A148FF09656F2997 /* Resources */,
@@ -363,6 +374,7 @@
 				177E02EA907BA330469D9EC9 /* AppHomeView.swift in Sources */,
 				1C53ADB87F4E13743DBF9E53 /* AppModel.swift in Sources */,
 				EA4362E1A7C92CD3606FA244 /* AuthService.swift in Sources */,
+				269851962FEA78F30066038E /* ReviewMealView.swift in Sources */,
 				0953B3A2AF98ACFC499E45AF /* AuthView.swift in Sources */,
 				705607CE5EFF55D862F2B57C /* CalendarSheet.swift in Sources */,
 				F30EC0532F3632A48E476180 /* CameraPicker.swift in Sources */,
@@ -370,6 +382,7 @@
 				666ED19CBC59497380C2AB6A /* DayPagerView.swift in Sources */,
 				C64D13070931BBE65408AEBB /* DayRecapSheet.swift in Sources */,
 				86E64AD80DACB43487AF8291 /* DayView.swift in Sources */,
+				26CF83E72FEA67D900FB7318 /* NutritionDisplay.swift in Sources */,
 				AEC241A3ED652879EEC57B62 /* DesignSystem.swift in Sources */,
 				F957B729A26AD94BB6D594C6 /* FirestoreService.swift in Sources */,
 				CD062D6F180ED5797491F75A /* FloatingDock.swift in Sources */,
@@ -379,6 +392,7 @@
 				27FF4A4B98B261690C722912 /* MealRecapApp.swift in Sources */,
 				498A05B1809D4693534205E2 /* MealVisual.swift in Sources */,
 				E5CEB9FF15FE1DF82FFFEA1D /* MessageBubble.swift in Sources */,
+				26619BCE2FDDEC6900490F38 /* MealHabitReminderService.swift in Sources */,
 				022B047BE80D03B9A31A7E42 /* Models.swift in Sources */,
 				F4F1B6872EF9E5DE852FE287 /* OnboardingView.swift in Sources */,
 				7C8A73A99E9218CE96212FFF /* PaywallView.swift in Sources */,
@@ -408,18 +422,19 @@
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = K48G99PWNM;
+				DEVELOPMENT_TEAM = NDX8XU8XCV;
 				DISPLAY_NAME = MealRecap;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = MealRecap/Resources/Info.plist;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.healthcare-fitness";
 				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.sbj.mealrecap;
+				PRODUCT_BUNDLE_IDENTIFIER = com.denzeltinashe.mealrecap;
 				PRODUCT_NAME = MealRecap;
 				SDKROOT = iphoneos;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -559,18 +574,19 @@
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = K48G99PWNM;
+				DEVELOPMENT_TEAM = NDX8XU8XCV;
 				DISPLAY_NAME = MealRecap;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = MealRecap/Resources/Info.plist;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.healthcare-fitness";
 				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.sbj.mealrecap;
+				PRODUCT_BUNDLE_IDENTIFIER = com.denzeltinashe.mealrecap;
 				PRODUCT_NAME = MealRecap;
 				SDKROOT = iphoneos;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";

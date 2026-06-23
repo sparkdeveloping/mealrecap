@@ -15,6 +15,9 @@ struct PhotoLogSheet: View {
     @State private var showLibraryPicker = false
     @State private var showCameraDeniedAlert = false
     @State private var photoLoadError: String?
+    @State private var pendingMeal: PendingPhotoMeal?
+    @State private var selectedPortion: Double = 1
+    @State private var isAdding = false
 
     var body: some View {
         GeometryReader { proxy in
@@ -35,7 +38,9 @@ struct PhotoLogSheet: View {
 
                         header
 
-                        if let previewImage, let previewData {
+                        if let pendingMeal, let previewImage {
+                            reviewCard(pending: pendingMeal, image: previewImage)
+                        } else if let previewImage, let previewData {
                             previewCard(image: previewImage, data: previewData)
                         } else {
                             sourcePickerCard
@@ -82,26 +87,33 @@ struct PhotoLogSheet: View {
             guard let newValue else { return }
             Task { await loadPhoto(newValue) }
         }
-        .sensoryFeedback(.selection, trigger: showLibraryPicker)
-        .sensoryFeedback(.selection, trigger: previewImage != nil)
-        .sensoryFeedback(.success, trigger: isWorking)
         .interactiveDismissDisabled(isWorking)
     }
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(previewImage == nil ? "Add a meal photo" : "Use this photo?")
+            Text(headerTitle)
                 .font(.mrTitle)
                 .foregroundStyle(MRColor.text)
-            Text(previewImage == nil
-                 ? "Take a fresh photo or choose one from your library. MealRecap estimates portions, calories, and macros."
-                 : "MealRecap will estimate calories and macros from this image. You can correct anything after analysis.")
+            Text(headerSubtitle)
                 .font(.mrBody)
                 .foregroundStyle(MRColor.secondaryText)
                 .lineSpacing(3)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .accessibilityElement(children: .combine)
+    }
+
+    private var headerTitle: String {
+        if pendingMeal != nil { return "Review meal" }
+        return previewImage == nil ? "Add a meal photo" : "Use this photo?"
+    }
+
+    private var headerSubtitle: String {
+        if pendingMeal != nil { return "Adjust the portion, inspect ingredients, then add it to today." }
+        return previewImage == nil
+            ? "Take a fresh photo or choose one from your library. MealRecap estimates portions, calories, and macros."
+            : "MealRecap will estimate calories, macros, ingredients, and details from this image."
     }
 
     private var sourcePickerCard: some View {
@@ -203,6 +215,146 @@ struct PhotoLogSheet: View {
         .glassRounded(cornerRadius: 34, tint: MRColor.backgroundTop.opacity(0.10), strokeOpacity: 0.58, shadowOpacity: 0.10)
     }
 
+    private func reviewCard(pending: PendingPhotoMeal, image: UIImage) -> some View {
+        let result = pending.result.scaled(by: selectedPortion)
+        let ingredients = displayItems(result.items)
+
+        return VStack(alignment: .leading, spacing: 16) {
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFill()
+                .frame(maxWidth: .infinity)
+                .frame(height: 250)
+                .clipShape(RoundedRectangle(cornerRadius: 30, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 30, style: .continuous).stroke(.white.opacity(0.58), lineWidth: 1))
+                .clipped()
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text(result.title)
+                    .font(.system(size: 27, weight: .semibold, design: .rounded))
+                    .foregroundStyle(MRColor.text)
+                    .lineLimit(3)
+                    .minimumScaleFactor(0.82)
+                Text(reviewSubtitle(result))
+                    .font(.mrSmall.weight(.semibold))
+                    .foregroundStyle(MRColor.secondaryText)
+                    .lineLimit(2)
+            }
+
+            HStack(alignment: .lastTextBaseline, spacing: 6) {
+                Text("\(result.totalCalories)")
+                    .font(.system(size: 42, weight: .bold, design: .rounded))
+                    .foregroundStyle(MRColor.text)
+                Text("cal")
+                    .font(.mrBody.weight(.bold))
+                    .foregroundStyle(MRColor.secondaryText)
+                Spacer(minLength: 8)
+            }
+
+            HStack(spacing: 9) {
+                MacroChip(label: "P", value: result.macros.protein)
+                MacroChip(label: "C", value: result.macros.carbs)
+                MacroChip(label: "F", value: result.macros.fat)
+            }
+
+            portionSelector
+
+            if !ingredients.isEmpty {
+                ingredientsCard(ingredients)
+            }
+
+            if let details = result.nutritionDetails, details.hasAdvancedNutrients {
+                PhotoNutritionDetailsCard(details: details)
+            }
+
+            Button {
+                Task { await addPendingMeal(pending) }
+            } label: {
+                HStack {
+                    if isAdding { ProgressView().tint(.white) }
+                    Text(isAdding ? "Adding..." : "Add to today")
+                }
+                .font(.mrBody.weight(.bold))
+                .foregroundStyle(.white)
+                .frame(maxWidth: .infinity, minHeight: 52)
+                .glassCapsule(tint: MRColor.accentDeep.opacity(isAdding ? 0.30 : 0.62), strokeOpacity: 0.42, shadowOpacity: 0.08)
+                .contentShape(Capsule())
+            }
+            .buttonStyle(PressablePolish())
+            .disabled(isAdding)
+            .accessibilityLabel("Add reviewed meal to today")
+
+            HStack(spacing: 10) {
+                secondaryReviewButton("Edit photo") { clearReview() }
+                secondaryReviewButton("Cancel") { dismiss() }
+            }
+        }
+        .padding(14)
+        .glassRounded(cornerRadius: 34, tint: MRColor.backgroundTop.opacity(0.10), strokeOpacity: 0.58, shadowOpacity: 0.10)
+    }
+
+    private var portionSelector: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("How much did you eat?")
+                .font(.mrHeadline)
+                .foregroundStyle(MRColor.text)
+            HStack(spacing: 8) {
+                portionButton(title: "1/4", value: 0.25)
+                portionButton(title: "1/2", value: 0.5)
+                portionButton(title: "3/4", value: 0.75)
+                portionButton(title: "All", value: 1)
+            }
+        }
+        .padding(14)
+        .glassRounded(cornerRadius: 24, tint: MRColor.backgroundTop.opacity(0.08), strokeOpacity: 0.36, shadowOpacity: 0.02)
+    }
+
+    private func portionButton(title: String, value: Double) -> some View {
+        Button {
+            withAnimation(.spring(response: 0.26, dampingFraction: 0.82)) { selectedPortion = value }
+        } label: {
+            Text(title)
+                .font(.mrSmall.weight(.bold))
+                .foregroundStyle(selectedPortion == value ? .white : MRColor.text)
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .background(selectedPortion == value ? MRColor.accentDeep : MRColor.card.opacity(0.46))
+                .clipShape(Capsule())
+                .overlay(Capsule().stroke(.white.opacity(0.48), lineWidth: 1))
+                .contentShape(Capsule())
+        }
+        .buttonStyle(PressablePolish())
+        .accessibilityLabel("\(title) portion")
+    }
+
+    private func ingredientsCard(_ items: [FoodItem]) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Ingredients")
+                .font(.mrHeadline)
+                .foregroundStyle(MRColor.text)
+            ForEach(items) { item in
+                PhotoIngredientRow(item: item)
+                if item.id != items.last?.id {
+                    Divider().background(MRColor.line.opacity(0.35))
+                }
+            }
+        }
+        .padding(16)
+        .glassRounded(cornerRadius: 24, tint: MRColor.backgroundTop.opacity(0.08), strokeOpacity: 0.36, shadowOpacity: 0.02)
+    }
+
+    private func secondaryReviewButton(_ title: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.mrSmall.weight(.bold))
+                .foregroundStyle(MRColor.secondaryText)
+                .frame(maxWidth: .infinity, minHeight: 46)
+                .glassCapsule(tint: MRColor.backgroundTop.opacity(0.06), strokeOpacity: 0.30, shadowOpacity: 0.01)
+                .contentShape(Capsule())
+        }
+        .buttonStyle(PressablePolish())
+        .disabled(isAdding)
+    }
+
     @MainActor
     private func loadPhoto(_ item: PhotosPickerItem) async {
         photoLoadError = nil
@@ -234,6 +386,14 @@ struct PhotoLogSheet: View {
         previewData = nil
         previewImage = nil
         photoLoadError = nil
+        pendingMeal = nil
+        selectedPortion = 1
+    }
+
+    @MainActor
+    private func clearReview() {
+        pendingMeal = nil
+        selectedPortion = 1
     }
 
     private func requestCamera() {
@@ -271,9 +431,34 @@ struct PhotoLogSheet: View {
     private func analyze(_ data: Data) async {
         isWorking = true
         defer { isWorking = false }
-        await app.analyzePhoto(data)
-        app.markPaywallMilestoneIfNeeded(.firstPhotoSuccess)
-        dismiss()
+        guard let pending = await app.analyzePhotoForReview(data) else { return }
+        await MainActor.run {
+            pendingMeal = pending
+            selectedPortion = 1
+        }
+    }
+
+    private func addPendingMeal(_ pending: PendingPhotoMeal) async {
+        isAdding = true
+        let didAdd = await app.addReviewedPhotoMeal(pending, portionFactor: selectedPortion)
+        await MainActor.run {
+            isAdding = false
+            if didAdd { dismiss() }
+        }
+    }
+
+    private func displayItems(_ items: [FoodItem]) -> [FoodItem] {
+        let filtered = items.filter { $0.hasDisplayableIngredientName }
+        if filtered.isEmpty, items.count == 1, items.first?.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "food item" {
+            return items
+        }
+        return filtered
+    }
+
+    private func reviewSubtitle(_ result: MealAnalysisResult) -> String {
+        let category = result.foodCategory?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let category, !category.isEmpty { return "\(category) · \(result.mealType.title)" }
+        return result.mealType.title
     }
 }
 
@@ -308,5 +493,81 @@ private struct PhotoSourceButtonLabel: View {
         .frame(maxWidth: .infinity, minHeight: 62, alignment: .leading)
         .glassRounded(cornerRadius: 22, tint: MRColor.backgroundTop.opacity(0.08), strokeOpacity: 0.36, shadowOpacity: 0.02)
         .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+    }
+}
+
+private struct PhotoIngredientRow: View {
+    let item: FoodItem
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(item.name)
+                    .font(.mrBody.weight(.semibold))
+                    .foregroundStyle(MRColor.text)
+                    .lineLimit(2)
+                if let serving = item.servingDescription, !serving.isEmpty {
+                    Text(serving)
+                        .font(.mrSmall)
+                        .foregroundStyle(MRColor.secondaryText)
+                        .lineLimit(2)
+                }
+                if let macroText = item.macroSummaryText {
+                    Text(macroText)
+                        .font(.mrMicro)
+                        .tracking(1.1)
+                        .foregroundStyle(MRColor.tertiaryText)
+                        .lineLimit(1)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Text("\(item.calories) cal")
+                .font(.mrSmall.weight(.bold))
+                .foregroundStyle(MRColor.text)
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+                .frame(minWidth: 62, alignment: .trailing)
+        }
+        .padding(.vertical, 6)
+    }
+}
+
+private struct PhotoNutritionDetailsCard: View {
+    let details: NutritionDetails
+
+    private var rows: [(String, String)] {
+        NutritionDisplay.rows(for: details)
+    }
+
+    private let columns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 2)
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("More nutrition")
+                .font(.mrHeadline)
+                .foregroundStyle(MRColor.text)
+            LazyVGrid(columns: columns, spacing: 8) {
+                ForEach(rows, id: \.0) { row in
+                    HStack {
+                        Text(row.0)
+                            .font(.mrSmall)
+                            .foregroundStyle(MRColor.secondaryText)
+                            .lineLimit(1)
+                        Spacer(minLength: 6)
+                        Text(row.1)
+                            .font(.mrSmall.weight(.bold))
+                            .foregroundStyle(MRColor.text)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.76)
+                    }
+                    .padding(.horizontal, 10)
+                    .frame(minHeight: 38)
+                    .background(.white.opacity(0.26), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                }
+            }
+        }
+        .padding(16)
+        .glassRounded(cornerRadius: 24, tint: MRColor.backgroundTop.opacity(0.08), strokeOpacity: 0.36, shadowOpacity: 0.02)
     }
 }

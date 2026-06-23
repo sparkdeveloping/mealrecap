@@ -1,5 +1,6 @@
 import Foundation
 import CryptoKit
+import AuthenticationServices
 
 @MainActor
 final class AuthService: ObservableObject {
@@ -15,22 +16,14 @@ final class AuthService: ObservableObject {
     func signIn(email: String, password: String) async throws {
         let normalizedEmail = normalize(email)
         guard normalizedEmail.isEmpty == false else { throw LocalAuthError.emailRequired }
-        guard password.count >= 6 else { throw LocalAuthError.passwordTooShort }
+        guard isValidEmail(normalizedEmail) else { throw LocalAuthError.invalidEmail }
+        guard password.count >= 8 else { throw LocalAuthError.passwordTooShort }
 
-        var accounts = loadAccounts()
+        let accounts = loadAccounts()
         let passwordHash = Self.sha256(password)
 
-        // Local-only auth: if this email has not been seen on this device, create it.
-        // This intentionally does not use Firebase Auth or Firebase ID tokens.
-        let account: LocalAccount
-        if let existing = accounts[normalizedEmail] {
-            guard existing.passwordHash == passwordHash else { throw LocalAuthError.invalidPassword }
-            account = existing
-        } else {
-            account = LocalAccount(uid: "local_" + UUID().uuidString.replacingOccurrences(of: "-", with: ""), email: normalizedEmail, passwordHash: passwordHash)
-            accounts[normalizedEmail] = account
-            saveAccounts(accounts)
-        }
+        guard let account = accounts[normalizedEmail] else { throw LocalAuthError.accountNotFound }
+        guard account.passwordHash == passwordHash else { throw LocalAuthError.invalidPassword }
 
         saveCurrent(account.session)
         onChange?(account.session)
@@ -39,7 +32,8 @@ final class AuthService: ObservableObject {
     func createAccount(email: String, password: String) async throws {
         let normalizedEmail = normalize(email)
         guard normalizedEmail.isEmpty == false else { throw LocalAuthError.emailRequired }
-        guard password.count >= 6 else { throw LocalAuthError.passwordTooShort }
+        guard isValidEmail(normalizedEmail) else { throw LocalAuthError.invalidEmail }
+        guard password.count >= 8 else { throw LocalAuthError.passwordTooShort }
 
         var accounts = loadAccounts()
         if accounts[normalizedEmail] != nil { throw LocalAuthError.accountAlreadyExists }
@@ -47,6 +41,25 @@ final class AuthService: ObservableObject {
         let account = LocalAccount(uid: "local_" + UUID().uuidString.replacingOccurrences(of: "-", with: ""), email: normalizedEmail, passwordHash: Self.sha256(password))
         accounts[normalizedEmail] = account
         saveAccounts(accounts)
+        saveCurrent(account.session)
+        onChange?(account.session)
+    }
+
+    func sendPasswordReset(email: String) async throws {
+        let normalizedEmail = normalize(email)
+        guard normalizedEmail.isEmpty == false else { throw LocalAuthError.emailRequired }
+        guard isValidEmail(normalizedEmail) else { throw LocalAuthError.invalidEmail }
+    }
+
+    func signInWithApple(credential: ASAuthorizationAppleIDCredential) async throws {
+        let appleID = credential.user
+        guard appleID.isEmpty == false else { throw LocalAuthError.appleSignInFailed }
+        let email = credential.email ?? "\(appleID.prefix(10))@privaterelay.appleid.com"
+        let account = LocalAccount(
+            uid: "apple_" + Self.sha256(appleID).prefix(28),
+            email: normalize(email),
+            passwordHash: "apple"
+        )
         saveCurrent(account.session)
         onChange?(account.session)
     }
@@ -94,6 +107,10 @@ final class AuthService: ObservableObject {
         email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     }
 
+    private func isValidEmail(_ email: String) -> Bool {
+        email.contains("@") && email.contains(".") && email.count >= 5
+    }
+
     private static func sha256(_ input: String) -> String {
         let data = Data(input.utf8)
         let digest = SHA256.hash(data: data)
@@ -112,20 +129,32 @@ final class AuthService: ObservableObject {
 
     enum LocalAuthError: LocalizedError {
         case emailRequired
+        case invalidEmail
         case passwordTooShort
         case invalidPassword
         case accountAlreadyExists
+        case accountNotFound
+        case appleSignInCancelled
+        case appleSignInFailed
 
         var errorDescription: String? {
             switch self {
             case .emailRequired:
                 return "Enter an email to continue."
+            case .invalidEmail:
+                return "Enter a valid email address."
             case .passwordTooShort:
-                return "Use at least 6 characters for your local MealRecap password."
+                return "Password must be at least 8 characters."
             case .invalidPassword:
-                return "That local password does not match this device's saved MealRecap account."
+                return "That password does not match this account."
             case .accountAlreadyExists:
-                return "That local account already exists on this device. Sign in instead."
+                return "That email is already in use. Sign in instead."
+            case .accountNotFound:
+                return "We could not find an account for that email."
+            case .appleSignInCancelled:
+                return "Sign in with Apple was canceled."
+            case .appleSignInFailed:
+                return "Apple sign-in could not be completed. Please try again."
             }
         }
     }

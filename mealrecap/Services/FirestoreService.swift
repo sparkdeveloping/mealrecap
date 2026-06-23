@@ -2,7 +2,15 @@ import Foundation
 import FirebaseFirestore
 
 final class FirestoreService: @unchecked Sendable {
-    private let db = Firestore.firestore()
+    private let db: Firestore
+
+    init() {
+        let firestore = Firestore.firestore()
+        let settings = firestore.settings
+        settings.cacheSettings = PersistentCacheSettings()
+        firestore.settings = settings
+        self.db = firestore
+    }
 
     func ensureProfile(uid: String) async throws {
         let ref = db.collection("users").document(uid)
@@ -18,7 +26,7 @@ final class FirestoreService: @unchecked Sendable {
         }
     }
 
-    func updateOnboardingPreferences(uid: String, displayName: String?, goalCalories: Int, goalMode: String, proteinTarget: Int?) async throws {
+    func updateOnboardingPreferences(uid: String, displayName: String?, goalCalories: Int, goalMode: String, proteinTarget: Int?, goalSetupMode: String? = nil, goalRecommendationSummary: String? = nil) async throws {
         var data: [String: Any] = [
             "goalCalories": goalCalories,
             "goalMode": goalMode,
@@ -30,6 +38,12 @@ final class FirestoreService: @unchecked Sendable {
         }
         if let proteinTarget, proteinTarget > 0 {
             data["proteinTarget"] = proteinTarget
+        }
+        if let goalSetupMode, !goalSetupMode.isEmpty {
+            data["goalSetupMode"] = goalSetupMode
+        }
+        if let goalRecommendationSummary, !goalRecommendationSummary.isEmpty {
+            data["goalRecommendationSummary"] = goalRecommendationSummary
         }
         try await db.collection("users").document(uid).setData(data, merge: true)
         try await dayRef(uid: uid, date: Date()).setData([
@@ -100,7 +114,7 @@ final class FirestoreService: @unchecked Sendable {
     func observeMeals(uid: String, date: Date, onChange: @escaping ([MealEntry]) -> Void) -> ListenerRegistration {
         dayRef(uid: uid, date: date)
             .collection("meals")
-            .order(by: "createdAt", descending: false)
+            .order(by: "createdAt", descending: true)
             .addSnapshotListener { snap, _ in
                 let meals = snap?.documents.compactMap { MealEntry.from(id: $0.documentID, data: $0.data()) } ?? []
                 onChange(meals)
@@ -148,9 +162,12 @@ final class FirestoreService: @unchecked Sendable {
             if let protein = item.protein { data["protein"] = protein }
             if let carbs = item.carbs { data["carbs"] = carbs }
             if let fat = item.fat { data["fat"] = fat }
+            if let nutritionDetails = item.nutritionDetails?.firestoreData, !nutritionDetails.isEmpty {
+                data["nutritionDetails"] = nutritionDetails
+            }
             return data
         }
-        let resolvedPhotoPath = result.photoPath ?? photoPath
+        let resolvedPhotoPath = source == .camera ? (photoPath ?? result.photoPath) : (result.photoPath ?? photoPath)
         let resolvedImageStatus = result.imageStatus ?? ((resolvedPhotoPath?.isEmpty == false || result.imageURL?.isEmpty == false) ? "ready" : "none")
         var data: [String: Any] = [
             "title": result.title,
@@ -173,6 +190,12 @@ final class FirestoreService: @unchecked Sendable {
         }
         if let resolvedPhotoPath, resolvedPhotoPath.isEmpty == false { data["photoPath"] = resolvedPhotoPath }
         if let imageURL = result.imageURL, imageURL.isEmpty == false { data["imageURL"] = imageURL }
+        if let imageKind = result.imageKind, imageKind.isEmpty == false { data["imageKind"] = imageKind }
+        if let imageAlpha = result.imageAlpha, imageAlpha.isEmpty == false { data["imageAlpha"] = imageAlpha }
+        if let imageStyleVersion = result.imageStyleVersion, imageStyleVersion.isEmpty == false { data["imageStyleVersion"] = imageStyleVersion }
+        if let nutritionDetails = result.nutritionDetails?.firestoreData, !nutritionDetails.isEmpty {
+            data["nutritionDetails"] = nutritionDetails
+        }
         try await ref.setData(data, merge: true)
         try await recalculateDayTotals(uid: uid, date: date)
     }
@@ -196,13 +219,16 @@ final class FirestoreService: @unchecked Sendable {
     }
 
 
-    func updateMealImageState(uid: String, date: Date, mealId: String, photoPath: String?, imageURL: String?, imageStatus: String) async throws {
+    func updateMealImageState(uid: String, date: Date, mealId: String, photoPath: String?, imageURL: String?, imageStatus: String, imageKind: String? = nil, imageAlpha: String? = nil, imageStyleVersion: String? = nil) async throws {
         var data: [String: Any] = [
             "imageStatus": imageStatus,
             "updatedAt": FieldValue.serverTimestamp()
         ]
         if let photoPath, photoPath.isEmpty == false { data["photoPath"] = photoPath }
         if let imageURL, imageURL.isEmpty == false { data["imageURL"] = imageURL }
+        if let imageKind, imageKind.isEmpty == false { data["imageKind"] = imageKind }
+        if let imageAlpha, imageAlpha.isEmpty == false { data["imageAlpha"] = imageAlpha }
+        if let imageStyleVersion, imageStyleVersion.isEmpty == false { data["imageStyleVersion"] = imageStyleVersion }
         try await dayRef(uid: uid, date: date).collection("meals").document(mealId).setData(data, merge: true)
     }
 

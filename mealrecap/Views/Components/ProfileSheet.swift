@@ -3,6 +3,7 @@ import SwiftUI
 struct ProfileSheet: View {
     @EnvironmentObject private var app: AppModel
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.openURL) private var openURL
 
     let meals: [MealEntry]
     let day: MealDay?
@@ -19,6 +20,11 @@ struct ProfileSheet: View {
 
     private var caloriesIn: Int { day?.caloriesIn ?? meals.reduce(0) { $0 + $1.calories } }
     private var missingImageCount: Int { meals.filter { ($0.photoPath ?? "").isEmpty }.count }
+    private let privacyURL = URL(string: "https://mealrecap.app/privacy")!
+    private let termsURL = URL(string: "https://mealrecap.app/terms")!
+    private let healthURL = URL(string: "https://mealrecap.app/health-disclaimer")!
+    private let supportURL = URL(string: "https://mealrecap.app/support")!
+    private let deleteURL = URL(string: "https://mealrecap.app/delete-account")!
     private var macroTotals: MacroSummary {
         meals.reduce(.empty) { total, meal in
             MacroSummary(protein: total.protein + meal.macros.protein, carbs: total.carbs + meal.macros.carbs, fat: total.fat + meal.macros.fat)
@@ -85,14 +91,33 @@ struct ProfileSheet: View {
                 .padding(18)
                 .premiumCard(cornerRadius: 28, shadowOpacity: 0.05)
 
+                HabitReminderCard(summary: app.mealHabitSummary) {
+                    Task {
+                        if app.mealHabitSummary.remindersEnabled {
+                            await app.disableMealTimeReminders()
+                        } else {
+                            await app.enableMealTimeReminders()
+                        }
+                    }
+                }
+
+                AppleHealthProfileCard(status: app.appleHealthStatus, summary: app.healthSummary) {
+                    Task { await app.requestHealthAccess() }
+                }
+
                 VStack(spacing: 10) {
                     ProfileAction(icon: "crown.fill", title: entitlement.isPro ? "Manage Pro" : "Upgrade to Pro", tint: MRColor.gold) {
                         onUpgrade()
                     }
                     .glassRounded(cornerRadius: 24, tint: MRColor.gold.opacity(0.08), strokeOpacity: 0.50, shadowOpacity: 0.04)
 
+                    ProfileAction(icon: "target", title: "Edit daily targets", tint: MRColor.accentDeep) {
+                        app.hasCompletedOnboarding = false
+                        dismiss()
+                    }
+
                     ProfileAction(icon: "arrow.clockwise", title: "Restore purchases") {
-                        Task { await app.purchases.restore() }
+                        Task { _ = await app.restorePurchases() }
                     }
                 }
 
@@ -101,9 +126,11 @@ struct ProfileSheet: View {
                         .font(.mrHeadline)
                         .foregroundStyle(MRColor.text)
 
-                    ProfileAction(icon: "lock.shield", title: "Privacy Policy") { legalDocument = .privacy }
-                    ProfileAction(icon: "doc.text", title: "Terms of Use") { legalDocument = .terms }
-                    ProfileAction(icon: "heart.text.square", title: "Health & Nutrition Disclaimer") { legalDocument = .health }
+                    ProfileAction(icon: "lock.shield", title: "Privacy Policy") { openURL(privacyURL) }
+                    ProfileAction(icon: "doc.text", title: "Terms of Use") { openURL(termsURL) }
+                    ProfileAction(icon: "heart.text.square", title: "Health & Nutrition Disclaimer") { openURL(healthURL) }
+                    ProfileAction(icon: "questionmark.bubble", title: "Support") { openURL(supportURL) }
+                    ProfileAction(icon: "person.crop.circle.badge.xmark", title: "Account deletion help") { openURL(deleteURL) }
                     ProfileAction(icon: "trash", title: "Delete account", tint: MRColor.danger) { showDeleteConfirmation = true }
                     ProfileAction(icon: "rectangle.portrait.and.arrow.right", title: "Sign out", tint: MRColor.danger) {
                         app.signOut()
@@ -125,13 +152,13 @@ struct ProfileSheet: View {
                 .presentationDetents([.large])
                 .presentationCornerRadius(34)
         }
-        .confirmationDialog("Delete local account?", isPresented: $showDeleteConfirmation, titleVisibility: .visible) {
+        .confirmationDialog("Delete account?", isPresented: $showDeleteConfirmation, titleVisibility: .visible) {
             Button("Delete account and data", role: .destructive) {
                 deleteAccount()
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This removes the local MealRecap account from this device and deletes this user’s MealRecap data from Firestore for the current local user id.")
+            Text("This removes your MealRecap account data from this device and deletes your saved MealRecap meals.")
         }
         .task { await loadStats() }
         .overlay {
@@ -184,10 +211,157 @@ struct ProfileSheet: View {
             } catch {
                 await MainActor.run {
                     isDeleting = false
-                    app.errorMessage = error.localizedDescription
+                    app.errorMessage = "Couldn’t delete the account right now. Try again."
                 }
             }
         }
+    }
+}
+
+private struct AppleHealthProfileCard: View {
+    let status: AppleHealthConnectionStatus
+    let summary: HealthSummary
+    let connect: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: "heart.text.square.fill")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(MRColor.accentDeep)
+                    .frame(width: 38, height: 38)
+                    .background(MRColor.accentSoft.opacity(0.55))
+                    .clipShape(Circle())
+
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("Connect Apple Health")
+                        .font(.mrHeadline)
+                        .foregroundStyle(MRColor.text)
+                    Text("MealRecap can read active energy and related fitness data from Apple Health to help estimate calories out and net calories. This is optional.")
+                        .font(.mrSmall)
+                        .foregroundStyle(MRColor.secondaryText)
+                        .lineLimit(4)
+                    Text("Health data is used only for your MealRecap insights and is not used for advertising.")
+                        .font(.mrSmall)
+                        .foregroundStyle(MRColor.tertiaryText)
+                        .lineLimit(3)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            HStack {
+                Text(status.title)
+                    .font(.mrSmall.weight(.bold))
+                    .foregroundStyle(MRColor.text)
+                Spacer()
+                if status == .connected {
+                    Text("Active energy \(summary.activeCalories) cal")
+                        .font(.mrSmall.weight(.semibold))
+                        .foregroundStyle(MRColor.secondaryText)
+                }
+            }
+
+            Button(action: healthAction) {
+                Text(buttonTitle)
+                    .font(.mrSmall.weight(.bold))
+                    .foregroundStyle(status == .unavailable ? MRColor.secondaryText : MRColor.accentDeep)
+                    .frame(maxWidth: .infinity)
+                    .frame(minHeight: 46)
+                    .glassCapsule(tint: MRColor.accentSoft.opacity(0.26), strokeOpacity: 0.44, shadowOpacity: 0.03)
+                    .contentShape(Capsule())
+            }
+            .buttonStyle(PressablePolish())
+            .disabled(status == .unavailable)
+            .accessibilityLabel(buttonTitle)
+        }
+        .padding(18)
+        .premiumCard(cornerRadius: 28, shadowOpacity: 0.04)
+    }
+
+    private var buttonTitle: String {
+        switch status {
+        case .connected, .permissionDenied:
+            return "Manage in Health"
+        case .unavailable:
+            return "Apple Health unavailable on this device"
+        case .notConnected:
+            return "Connect Apple Health"
+        }
+    }
+
+    private func healthAction() {
+        switch status {
+        case .connected, .permissionDenied:
+            guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
+            UIApplication.shared.open(url)
+        case .notConnected:
+            connect()
+        case .unavailable:
+            return
+        }
+    }
+}
+
+private struct HabitReminderCard: View {
+    let summary: MealHabitSummary
+    let toggle: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: summary.remindersEnabled ? "bell.badge.fill" : "clock.badge")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(MRColor.accentDeep)
+                    .frame(width: 38, height: 38)
+                    .background(MRColor.accentSoft.opacity(0.55))
+                    .clipShape(Circle())
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Meal rhythm")
+                        .font(.mrHeadline)
+                        .foregroundStyle(MRColor.text)
+                    Text(summary.headline)
+                        .font(.mrSmall.weight(.semibold))
+                        .foregroundStyle(MRColor.secondaryText)
+                        .lineLimit(2)
+                    Text(summary.detail)
+                        .font(.mrSmall)
+                        .foregroundStyle(MRColor.tertiaryText)
+                        .lineLimit(3)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            if !summary.windows.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(summary.windows) { window in
+                            Text("\(window.title) \(window.displayTime)")
+                                .font(.system(size: 11, weight: .bold, design: .rounded))
+                                .foregroundStyle(MRColor.secondaryText)
+                                .padding(.horizontal, 10)
+                                .frame(height: 28)
+                                .glassCapsule(tint: MRColor.backgroundTop.opacity(0.08), strokeOpacity: 0.30, shadowOpacity: 0.01)
+                        }
+                    }
+                }
+                .scrollClipDisabled()
+            }
+
+            Button(action: toggle) {
+                Text(summary.remindersEnabled ? "Turn off meal reminders" : "Turn on gentle reminders")
+                    .font(.mrSmall.weight(.bold))
+                    .foregroundStyle(summary.remindersEnabled ? MRColor.secondaryText : MRColor.accentDeep)
+                    .frame(maxWidth: .infinity)
+                    .frame(minHeight: 46)
+                    .glassCapsule(tint: summary.remindersEnabled ? MRColor.cardDeep.opacity(0.18) : MRColor.accentSoft.opacity(0.30), strokeOpacity: 0.44, shadowOpacity: 0.03)
+                    .contentShape(Capsule())
+            }
+            .buttonStyle(PressablePolish())
+            .accessibilityLabel(summary.remindersEnabled ? "Turn off meal time reminders" : "Turn on meal time reminders")
+        }
+        .padding(18)
+        .premiumCard(cornerRadius: 28, shadowOpacity: 0.04)
     }
 }
 
@@ -224,7 +398,8 @@ private struct ProfileAction: View {
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(tint)
                     .frame(width: 34, height: 34)
-                    .glassCircle(tint: tint.opacity(0.08), strokeOpacity: 0.28, shadowOpacity: 0.02)
+                    .background(tint.opacity(0.08), in: Circle())
+                    .overlay(Circle().stroke(.white.opacity(0.32), lineWidth: 1))
                 Text(title)
                     .font(.mrBody.weight(.medium))
                     .foregroundStyle(tint)
@@ -236,7 +411,8 @@ private struct ProfileAction: View {
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 13)
-            .glassRounded(cornerRadius: 22, tint: tint.opacity(0.05), strokeOpacity: 0.34, shadowOpacity: 0.03)
+            .background(.white.opacity(0.30), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).stroke(.white.opacity(0.40), lineWidth: 1))
             .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         }
         .buttonStyle(PressablePolish())
@@ -265,13 +441,13 @@ enum LegalDocument: String, Identifiable {
             return """
             MealRecap Privacy Policy
 
-            MealRecap helps you log meals, estimate nutrition, and view daily food history. The app may store local account details on your device and MealRecap meal data in Firebase, including meal text, generated nutrition estimates, uploaded meal photos, generated meal images, daily totals, Smart Action usage, and purchase entitlement status.
+            MealRecap helps you log meals, estimate nutrition, and view daily food history. The app may store account details, meal text, generated nutrition estimates, uploaded meal photos, generated meal images, daily totals, Smart Action usage, and purchase entitlement status.
 
-            MealRecap may send meal text or meal images to backend services to estimate nutrition and generate meal imagery. Do not enter sensitive information you do not want processed for meal analysis. MealRecap does not sell personal data.
+            MealRecap may process meal text or meal images with MealRecap services to estimate nutrition and generate meal imagery. Do not enter sensitive information you do not want processed for meal analysis. MealRecap does not sell personal data.
 
             Health data is used only to calculate calories out and daily balance when you choose to grant Health access. You can revoke Health access in iOS Settings at any time.
 
-            You can delete your local account and MealRecap data from the Profile screen. This development build uses local-only account auth; before App Store release, replace this text with your final hosted privacy policy URL and jurisdiction-specific legal language.
+            You can delete your account and MealRecap data from the Profile screen.
             """
         case .terms:
             return """
@@ -281,9 +457,9 @@ enum LegalDocument: String, Identifiable {
 
             MealRecap Pro subscriptions unlock additional usage and features. Purchases are processed by Apple through StoreKit and are subject to Apple’s subscription terms.
 
-            MealRecap is provided as-is. Do not use the app for emergency, medical, or clinical nutrition decisions. You agree not to misuse the backend, upload unlawful content, or attempt to access another user’s data.
+            MealRecap is provided as-is. Do not use the app for emergency, medical, or clinical nutrition decisions. You agree not to misuse MealRecap services, upload unlawful content, or attempt to access another user’s data.
 
-            Before App Store release, replace this in-app text with your final hosted Terms of Use and Apple standard EULA link if you choose to use Apple’s default license.
+            Subscriptions renew and can be managed or canceled through your Apple ID settings.
             """
         case .health:
             return """

@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct MinimalTopBar: View {
+    let usage: SmartActionUsage
     let entitlement: ProEntitlement
     let onUpgrade: () -> Void
     let onCalendar: () -> Void
@@ -15,7 +16,7 @@ struct MinimalTopBar: View {
 
     private func topBar(compact: Bool) -> some View {
         HStack(spacing: compact ? 7 : 10) {
-            MealRecapWordmark(compact: compact)
+            MealRecapBrandLockup(compact: compact, markSize: compact ? 30 : 34)
             .layoutPriority(1)
 
             Spacer(minLength: compact ? 6 : 10)
@@ -27,7 +28,7 @@ struct MinimalTopBar: View {
                         .foregroundStyle(MRColor.accentDeep)
                         .frame(width: 34, height: 30)
                 } else {
-                    Text(entitlement.isPro ? "PRO" : "Upgrade")
+                    Text(upgradeTitle(compact: compact))
                         .font(.mrMicro)
                         .tracking(0.8)
                         .foregroundStyle(entitlement.isPro ? .white : MRColor.accentDeep)
@@ -49,6 +50,13 @@ struct MinimalTopBar: View {
         }
         .frame(maxWidth: .infinity)
     }
+
+    private func upgradeTitle(compact: Bool) -> String {
+        guard !entitlement.isPro else { return "PRO" }
+        let actionsLeft = usage.isInOnboardingWindow ? max(0, 12 - usage.onboardingUsed) : max(0, 6 - usage.weeklyUsed)
+        if compact { return "Upgrade" }
+        return actionsLeft > 0 ? "\(actionsLeft) left · Upgrade" : "Upgrade"
+    }
 }
 
 
@@ -57,11 +65,10 @@ struct CleanDayHero: View {
     let day: MealDay?
     let meals: [MealEntry]
     let messages: [DayMessage]
-    let usage: SmartActionUsage
-    let entitlement: ProEntitlement
     let proteinTarget: Int?
-    let onUpgrade: () -> Void
+    let appleHealthStatus: AppleHealthConnectionStatus
     let onConnectHealth: () -> Void
+    let onShowTargets: () -> Void
 
     private var caloriesIn: Int { day?.caloriesIn ?? meals.reduce(0) { $0 + $1.calories } }
     private var goal: Int { max(day?.goalCalories ?? 2200, 1) }
@@ -115,9 +122,11 @@ struct CleanDayHero: View {
                 if let proteinTarget, proteinTarget > 0 {
                     GoalLens(
                         calorieProgress: min(Double(caloriesIn) / Double(goal), 1),
-                        proteinProgress: min(macroTotals.protein / Double(proteinTarget), 1)
+                        proteinProgress: min(macroTotals.protein / Double(proteinTarget), 1),
+                        onTap: onShowTargets
                     )
-                    .accessibilityLabel("Calories \(Int(progress * 100)) percent, protein \(Int((macroTotals.protein / Double(proteinTarget) * 100).rounded())) percent")
+                    .accessibilityLabel("Daily targets. Calories \(Int((Double(caloriesIn) / Double(goal) * 100).rounded())) percent, protein \(Int((macroTotals.protein / Double(proteinTarget) * 100).rounded())) percent")
+                    .accessibilityHint("Shows calorie and protein target progress")
                 }
             }
 
@@ -129,21 +138,15 @@ struct CleanDayHero: View {
                 HeroMacro(value: Int(macroTotals.fat.rounded()), label: "fat")
             }
 
-            MetricGrid(
-                caloriesIn: caloriesIn,
-                caloriesOut: caloriesOut,
-                remaining: remaining,
-                net: day?.netCalories ?? caloriesIn,
-                onConnectHealth: onConnectHealth
-            )
-
-            SmartActionsCard(entitlement: entitlement, actionsLeft: smartActionsLeft, onUpgrade: onUpgrade)
+                MetricGrid(
+                    caloriesIn: caloriesIn,
+                    caloriesOut: caloriesOut,
+                    remaining: remaining,
+                    net: day?.netCalories ?? caloriesIn,
+                    appleHealthStatus: appleHealthStatus,
+                    onConnectHealth: onConnectHealth
+                )
         }
-    }
-
-    private var smartActionsLeft: Int {
-        if usage.isInOnboardingWindow { return max(0, 12 - usage.onboardingUsed) }
-        return max(0, 6 - usage.weeklyUsed)
     }
 
     private var dayTitle: String {
@@ -178,34 +181,140 @@ private struct CapsuleMeter: View {
 private struct GoalLens: View {
     let calorieProgress: Double
     let proteinProgress: Double
+    let onTap: () -> Void
+
+    var body: some View {
+        Button(action: onTap) {
+            ZStack {
+                Circle()
+                    .stroke(MRColor.cardDeep.opacity(0.34), lineWidth: 5)
+                Circle()
+                    .trim(from: 0, to: max(0.02, min(calorieProgress, 1)))
+                    .stroke(MRColor.accentDeep, style: StrokeStyle(lineWidth: 5, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
+                Circle()
+                    .stroke(MRColor.cardDeep.opacity(0.24), lineWidth: 4)
+                    .frame(width: 38, height: 38)
+                Circle()
+                    .trim(from: 0, to: max(0.02, min(proteinProgress, 1)))
+                    .stroke(MRColor.gold.opacity(0.92), style: StrokeStyle(lineWidth: 4, lineCap: .round))
+                    .frame(width: 38, height: 38)
+                    .rotationEffect(.degrees(-90))
+                VStack(spacing: -1) {
+                    Text("CAL")
+                        .font(.system(size: 7, weight: .black, design: .rounded))
+                    Text("PRO")
+                        .font(.system(size: 7, weight: .black, design: .rounded))
+                }
+                .foregroundStyle(MRColor.secondaryText)
+            }
+            .frame(width: 54, height: 54)
+            .padding(5)
+            .glassCircle(tint: MRColor.backgroundTop.opacity(0.08), strokeOpacity: 0.34, shadowOpacity: 0.03)
+            .contentShape(Circle())
+        }
+        .buttonStyle(PressablePolish())
+    }
+}
+
+struct DailyTargetsSheet: View {
+    let day: MealDay?
+    let meals: [MealEntry]
+    let proteinTarget: Int?
+    let onEditTargets: () -> Void
+
+    private var caloriesIn: Int { day?.caloriesIn ?? meals.reduce(0) { $0 + $1.calories } }
+    private var calorieGoal: Int { max(day?.goalCalories ?? 2200, 1) }
+    private var protein: Int { Int(meals.reduce(0.0) { $0 + $1.macros.protein }.rounded()) }
+    private var proteinGoal: Int { max(proteinTarget ?? 0, 0) }
+    private var caloriesLeft: Int { max(calorieGoal - caloriesIn, 0) }
+    private var calorieProgress: Double { Double(caloriesIn) / Double(calorieGoal) }
+    private var proteinProgress: Double {
+        guard proteinGoal > 0 else { return 0 }
+        return Double(protein) / Double(proteinGoal)
+    }
 
     var body: some View {
         ZStack {
-            Circle()
-                .stroke(MRColor.cardDeep.opacity(0.34), lineWidth: 5)
-            Circle()
-                .trim(from: 0, to: max(0.02, calorieProgress))
-                .stroke(MRColor.accentDeep, style: StrokeStyle(lineWidth: 5, lineCap: .round))
-                .rotationEffect(.degrees(-90))
-            Circle()
-                .stroke(MRColor.cardDeep.opacity(0.24), lineWidth: 4)
-                .frame(width: 38, height: 38)
-            Circle()
-                .trim(from: 0, to: max(0.02, proteinProgress))
-                .stroke(MRColor.gold.opacity(0.92), style: StrokeStyle(lineWidth: 4, lineCap: .round))
-                .frame(width: 38, height: 38)
-                .rotationEffect(.degrees(-90))
-            VStack(spacing: -1) {
-                Image(systemName: "target")
-                    .font(.system(size: 10, weight: .bold))
-                Text("P")
-                    .font(.system(size: 8, weight: .bold, design: .rounded))
+            AmbientBackground()
+
+            VStack(alignment: .leading, spacing: 18) {
+                Capsule()
+                    .fill(MRColor.line)
+                    .frame(width: 42, height: 5)
+                    .frame(maxWidth: .infinity)
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Daily Targets")
+                        .font(.mrTitle)
+                        .foregroundStyle(MRColor.text)
+                    Text("A quick read on today’s calories and protein. You can adjust targets anytime.")
+                        .font(.mrBody)
+                        .foregroundStyle(MRColor.secondaryText)
+                        .lineSpacing(3)
+                }
+
+                VStack(spacing: 12) {
+                    targetRow(
+                        title: "Calories",
+                        value: "\(caloriesIn.formatted()) / \(calorieGoal.formatted()) cal",
+                        detail: caloriesLeft == 0 ? "Target reached" : "\(caloriesLeft.formatted()) cal left",
+                        progress: calorieProgress,
+                        tint: MRColor.accentDeep
+                    )
+
+                    if proteinGoal > 0 {
+                        targetRow(
+                            title: "Protein",
+                            value: "\(protein) / \(proteinGoal)g",
+                            detail: protein >= proteinGoal ? "Protein target reached" : "\(proteinGoal - protein)g left",
+                            progress: proteinProgress,
+                            tint: MRColor.gold
+                        )
+                    }
+                }
+
+                Button(action: onEditTargets) {
+                    Label("Edit or recalculate targets", systemImage: "slider.horizontal.3")
+                        .font(.mrSmall.weight(.bold))
+                        .foregroundStyle(MRColor.accentDeep)
+                        .frame(maxWidth: .infinity)
+                        .frame(minHeight: 50)
+                        .glassCapsule(tint: MRColor.accentSoft.opacity(0.30), strokeOpacity: 0.44, shadowOpacity: 0.03)
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(PressablePolish())
+                .accessibilityLabel("Edit or recalculate daily targets")
             }
-            .foregroundStyle(MRColor.secondaryText)
+            .padding(24)
         }
-        .frame(width: 54, height: 54)
-        .padding(5)
-        .glassCircle(tint: MRColor.backgroundTop.opacity(0.08), strokeOpacity: 0.34, shadowOpacity: 0.03, interactive: false)
+    }
+
+    private func targetRow(title: String, value: String, detail: String, progress: Double, tint: Color) -> some View {
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(title.uppercased())
+                    .font(.mrMicro)
+                    .tracking(2.0)
+                    .foregroundStyle(MRColor.tertiaryText)
+                Spacer(minLength: 12)
+                Text(value)
+                    .font(.mrSmall.weight(.bold))
+                    .foregroundStyle(MRColor.text)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.76)
+            }
+
+            CapsuleMeter(progress: min(max(progress, 0), 1.15), isOver: progress > 1)
+
+            Text(detail)
+                .font(.mrSmall)
+                .foregroundStyle(MRColor.secondaryText)
+        }
+        .padding(16)
+        .background(.white.opacity(0.30), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).stroke(.white.opacity(0.52), lineWidth: 1))
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -231,6 +340,7 @@ private struct MetricGrid: View {
     let caloriesOut: Int
     let remaining: Int
     let net: Int
+    let appleHealthStatus: AppleHealthConnectionStatus
     let onConnectHealth: () -> Void
 
     private let compactColumns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 2)
@@ -251,12 +361,25 @@ private struct MetricGrid: View {
     private func cards(minWidth: CGFloat) -> some View {
         SmallStat(value: caloriesIn, label: "in", icon: "fork.knife")
             .frame(minWidth: minWidth, maxWidth: .infinity)
-        SmallStat(value: caloriesOut, label: caloriesOut == 0 ? "Health" : "out", icon: caloriesOut == 0 ? "heart.text.square.fill" : "flame", action: caloriesOut == 0 ? onConnectHealth : nil)
+        SmallStat(value: caloriesOut, label: appleHealthLabel, icon: appleHealthIcon, action: appleHealthStatus == .notConnected ? onConnectHealth : nil)
             .frame(minWidth: minWidth, maxWidth: .infinity)
         SmallStat(value: remaining, label: "left", icon: "target")
             .frame(minWidth: minWidth, maxWidth: .infinity)
         SmallStat(value: net, label: "net", icon: "equal.circle")
             .frame(minWidth: minWidth, maxWidth: .infinity)
+    }
+
+    private var appleHealthLabel: String {
+        switch appleHealthStatus {
+        case .connected: return caloriesOut == 0 ? "Active energy" : "Apple Health"
+        case .permissionDenied: return "Apple Health denied"
+        case .unavailable: return "Apple Health unavailable"
+        case .notConnected: return "Connect Apple Health"
+        }
+    }
+
+    private var appleHealthIcon: String {
+        appleHealthStatus == .connected ? "flame" : "heart.text.square.fill"
     }
 }
 
@@ -371,7 +494,7 @@ struct CleanMealFeed: View {
                         .lineLimit(1)
                         .minimumScaleFactor(0.78)
                     Spacer(minLength: 12)
-                    Text("\(meals.count) logged")
+                    Text(mealCountText)
                         .font(.mrSmall.weight(.semibold))
                         .foregroundStyle(MRColor.secondaryText)
                         .lineLimit(1)
@@ -381,7 +504,7 @@ struct CleanMealFeed: View {
                     Text("Meals")
                         .font(.system(size: 38, weight: .semibold, design: .rounded))
                         .foregroundStyle(MRColor.text)
-                    Text("\(meals.count) logged")
+                    Text(mealCountText)
                         .font(.mrSmall.weight(.semibold))
                         .foregroundStyle(MRColor.secondaryText)
                 }
@@ -408,24 +531,50 @@ struct CleanMealFeed: View {
         }
     }
 
+    private var mealCountText: String {
+        switch meals.count {
+        case 0: "No meals"
+        case 1: "1 meal"
+        default: "\(meals.count) meals"
+        }
+    }
+
     private var groupedSections: [MealTimeSection] {
         let groups = Dictionary(grouping: meals) { meal in
             MealTimeSection.Kind(date: meal.createdAt, type: meal.mealType)
         }
         return groups.map { kind, meals in
-            MealTimeSection(kind: kind, meals: meals.sorted { $0.createdAt < $1.createdAt })
+            MealTimeSection(kind: kind, meals: meals.sorted { $0.createdAt > $1.createdAt })
         }
-        .sorted { $0.kind.sortOrder < $1.kind.sortOrder }
+        .sorted { $0.kind.sortOrder > $1.kind.sortOrder }
     }
 
     private func prompt(for meal: MealEntry) -> String? {
-        if let prompt = meal.originPrompt?.trimmingCharacters(in: .whitespacesAndNewlines), !prompt.isEmpty { return prompt }
+        if let prompt = meal.originPrompt?.trimmingCharacters(in: .whitespacesAndNewlines), Self.isDisplayablePrompt(prompt) { return prompt }
         let userMessages = messages.filter { $0.role == "user" }
         let candidates = userMessages
             .map { ($0, abs($0.createdAt.timeIntervalSince(meal.createdAt))) }
             .filter { $0.1 < 900 }
             .sorted { $0.1 < $1.1 }
-        return candidates.first?.0.content
+        return candidates.first(where: { Self.isDisplayablePrompt($0.0.content) })?.0.content
+    }
+
+    private static func isDisplayablePrompt(_ value: String) -> Bool {
+        let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !normalized.isEmpty else { return false }
+        let blocked = [
+            "photo analysis",
+            "photo recap",
+            "voice recap",
+            "day recap",
+            "snap",
+            "say",
+            "meal",
+            "food item",
+            "image",
+            "unknown"
+        ]
+        return !blocked.contains(normalized)
     }
 }
 
@@ -580,8 +729,8 @@ struct CleanEmptyPrompt: View {
         if (11..<16).contains(hour) {
             return [
                 "Chicken rice bowl with avocado",
-                "Turkey sandwich, chips, and iced tea",
-                "Two McDoubles and a Coke"
+                "Turkey sandwich, fruit, and iced tea",
+                "Greek yogurt with berries"
             ]
         }
         if (17..<22).contains(hour) {

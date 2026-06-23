@@ -17,6 +17,8 @@ struct DayView: View {
     @State private var isComposerMenuOpen = false
     @State private var scrollChromeProgress = 0.0
     @State private var selectedMeal: MealEntry?
+    @State private var showDailyTargets = false
+    @State private var pendingMealReview: PendingMealReview?
 
     var body: some View {
         NavigationStack {
@@ -36,11 +38,10 @@ struct DayView: View {
                                 day: app.activeDay,
                                 meals: app.meals,
                                 messages: app.messages,
-                                usage: app.usage,
-                                entitlement: app.entitlement,
                                 proteinTarget: app.proteinTarget,
-                                onUpgrade: { app.markPaywallMilestoneIfNeeded(.general) },
-                                onConnectHealth: { Task { await app.requestHealthAccess() } }
+                                appleHealthStatus: app.appleHealthStatus,
+                                onConnectHealth: { Task { await app.requestHealthAccess() } },
+                                onShowTargets: { showDailyTargets = true }
                             )
                             .padding(.top, proxy.safeAreaInsets.top + 92)
 
@@ -63,7 +64,7 @@ struct DayView: View {
                                 )
                             }
 
-                            Color.clear.frame(height: 118 + proxy.safeAreaInsets.bottom)
+                            Color.clear.frame(height: 150 + proxy.safeAreaInsets.bottom)
                         }
                         .frame(width: contentWidth, alignment: .leading)
                         .padding(.horizontal, pageHorizontalPadding)
@@ -86,6 +87,7 @@ struct DayView: View {
                         progress: scrollChromeProgress,
                         safeTop: proxy.safeAreaInsets.top,
                         viewportWidth: viewportWidth,
+                        usage: app.usage,
                         entitlement: app.entitlement,
                         onUpgrade: { app.markPaywallMilestoneIfNeeded(.general) },
                         onCalendar: { showCalendar = true },
@@ -158,7 +160,7 @@ struct DayView: View {
         }
         .sheet(isPresented: $showVoice) {
             VoiceLogSheet()
-                .presentationDetents([.medium])
+                .presentationDetents([.medium, .large])
                 .presentationCornerRadius(34)
                 .presentationDragIndicator(.visible)
                 .presentationBackground(.clear)
@@ -189,41 +191,96 @@ struct DayView: View {
             .presentationDragIndicator(.visible)
             .presentationBackground(.clear)
         }
+        .sheet(isPresented: $showDailyTargets) {
+            DailyTargetsSheet(day: app.activeDay, meals: app.meals, proteinTarget: app.proteinTarget) {
+                showDailyTargets = false
+                app.hasCompletedOnboarding = false
+            }
+            .presentationDetents([.medium])
+            .presentationCornerRadius(34)
+            .presentationDragIndicator(.visible)
+            .presentationBackground(.clear)
+        }
         .fullScreenCover(isPresented: $showFocusedComposer) {
             FocusedComposerView(
                 text: $message,
                 suggestions: suggestions,
-                submit: { text in await app.logText(text) },
+                submit: { text in await submitTextForReview(text) },
                 onPhoto: { showFocusedComposer = false; showPhoto = true },
                 onVoice: { showFocusedComposer = false; showVoice = true },
                 onRecap: { showFocusedComposer = false; showRecap = true },
                 onUpgrade: { showFocusedComposer = false; app.markPaywallMilestoneIfNeeded(.general) }
             )
         }
-        .sensoryFeedback(.selection, trigger: isComposerMenuOpen)
-        .sensoryFeedback(.selection, trigger: showCalendar)
-        .sensoryFeedback(.selection, trigger: selectedMeal?.id)
+        .fullScreenCover(item: $pendingMealReview) { pending in
+            ReviewMealView(pending: pending) {
+                pendingMealReview = nil
+            } onTryAgain: {
+                message = pending.originPrompt ?? ""
+                showFocusedComposer = true
+            }
+            .environmentObject(app)
+        }
+        .task {
+            try? await Task.sleep(nanoseconds: 900_000_000)
+            await app.requestPostOnboardingNotificationsIfNeeded()
+        }
     }
 
     private var suggestions: [String] {
         var seen = Set<String>()
         let prompts = app.meals.compactMap { meal -> String? in
-            if let origin = meal.originPrompt?.trimmingCharacters(in: .whitespacesAndNewlines), !origin.isEmpty { return origin }
-            return meal.title
+            if let origin = meal.originPrompt?.trimmingCharacters(in: .whitespacesAndNewlines), Self.isUsefulUsualPick(origin) {
+                return Self.trimUsualPick(origin)
+            }
+            return Self.isUsefulUsualPick(meal.title) ? Self.trimUsualPick(meal.title) : nil
         }
         return prompts.reversed().filter { prompt in
-            let key = prompt.lowercased()
+            let key = prompt.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
             if seen.contains(key) { return false }
             seen.insert(key)
             return true
         }.prefix(3).map { $0 }
     }
 
+    private static func isUsefulUsualPick(_ value: String) -> Bool {
+        let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return false }
+        let blocked = [
+            "photo analysis",
+            "photo recap",
+            "voice recap",
+            "day recap",
+            "snap",
+            "say",
+            "meal",
+            "food item",
+            "image",
+            "unknown"
+        ]
+        return !blocked.contains(normalized.lowercased())
+    }
+
+    private static func trimUsualPick(_ value: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count > 64 else { return trimmed }
+        let index = trimmed.index(trimmed.startIndex, offsetBy: 61)
+        return String(trimmed[..<index]).trimmingCharacters(in: .whitespacesAndNewlines) + "..."
+    }
+
     private func submitMessage() {
         let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         message = ""
-        Task { await app.logText(trimmed) }
+        Task { await submitTextForReview(trimmed) }
+    }
+
+    private func submitTextForReview(_ text: String) async {
+        guard let pending = await app.analyzeMealForReview(text, source: .text) else { return }
+        await MainActor.run {
+            pendingMealReview = pending
+            showFocusedComposer = false
+        }
     }
 }
 
@@ -256,6 +313,7 @@ private struct FloatingTopChrome: View {
     let progress: Double
     let safeTop: CGFloat
     let viewportWidth: CGFloat
+    let usage: SmartActionUsage
     let entitlement: ProEntitlement
     let onUpgrade: () -> Void
     let onCalendar: () -> Void
@@ -266,6 +324,7 @@ private struct FloatingTopChrome: View {
 
         VStack(spacing: 0) {
             MinimalTopBar(
+                usage: usage,
                 entitlement: entitlement,
                 onUpgrade: onUpgrade,
                 onCalendar: onCalendar,

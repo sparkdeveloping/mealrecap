@@ -13,7 +13,7 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>$(PRODUCT_NAME)</string>
+	<string>MealRecap</string>
 	<key>CFBundlePackageType</key>
 	<string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
 	<key>CFBundleShortVersionString</key>
@@ -27,15 +27,11 @@
 	<key>NSCameraUsageDescription</key>
 	<string>MealRecap uses your camera to analyze food photos and estimate calories, portions, and nutrition.</string>
 	<key>NSHealthShareUsageDescription</key>
-	<string>MealRecap reads health data such as active energy, resting energy, steps, workouts, weight, and height to calculate calories out and daily net calories.</string>
+	<string>MealRecap reads active energy and related fitness data from Apple Health to estimate calories out and daily net calories.</string>
 	<key>NSHealthUpdateUsageDescription</key>
-	<string>MealRecap may save nutrition or weight-related updates to Apple Health when you choose to sync them.</string>
-	<key>NSMicrophoneUsageDescription</key>
-	<string>MealRecap uses your microphone so you can log meals by voice.</string>
+	<string>MealRecap can save nutrition information and meal-related health data to Apple Health when you choose to log or sync a meal.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>MealRecap uses your photo library so you can upload meal photos for calorie and nutrition analysis.</string>
-	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>MealRecap uses speech recognition to turn your voice meal logs into text before analyzing them.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
