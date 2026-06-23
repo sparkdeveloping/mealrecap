@@ -48,7 +48,7 @@ targets:
         product: SDWebImageSwiftUI
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.sbj.mealrecap
+        PRODUCT_BUNDLE_IDENTIFIER: com.denzeltinashe.mealrecap
         PRODUCT_NAME: MealRecap
         DISPLAY_NAME: MealRecap
         INFOPLIST_FILE: MealRecap/Resources/Info.plist

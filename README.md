@@ -7,7 +7,7 @@ It uses Firebase as the live backend, OpenAI through Cloud Functions, USDA FoodD
 ## Locked product direction
 
 - App name: MealRecap
-- Bundle ID: `com.sbj.mealrecap`
+- Bundle ID: `com.denzeltinashe.mealrecap`
 - Minimum iOS: `26.0`
 - UI: SwiftUI, light mode only
 - Backend: one Firebase project, no emulators
@@ -70,8 +70,9 @@ The deploy hook runs `npm install` and `npm run build` inside `functions` before
 
 10. Create App Store Connect subscription products:
 
-- `com.sbj.mealrecap.pro.monthly`
-- `com.sbj.mealrecap.pro.yearly`
+- `com.denzeltinashe.mealrecap.pro.weekly`
+- `com.denzeltinashe.mealrecap.pro.monthly`
+- `com.denzeltinashe.mealrecap.pro.yearly`
 
 ## Security note
 

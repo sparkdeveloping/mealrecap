@@ -4,8 +4,9 @@ MealRecap uses a hook-first freemium model.
 
 ## StoreKit 2 product IDs
 
-- Monthly: `com.sbj.mealrecap.pro.monthly`
-- Yearly: `com.sbj.mealrecap.pro.yearly`
+- Weekly: `com.denzeltinashe.mealrecap.pro.weekly`
+- Monthly: `com.denzeltinashe.mealrecap.pro.monthly`
+- Yearly: `com.denzeltinashe.mealrecap.pro.yearly`
 
 ## Free tier
 
